@@ -1,22 +1,20 @@
-# security-scan：交付前 Slither 安全掃描 Kit
+# security-scan
 
-## 這是什麼、為什麼存在
+在交付前，使用此工具做靜態分析並生成簡易自檢報告，確保交付的品質穩定性。
 
-公司幫甲方開發合約後，甲方通常會自己另外找第三方審計。這套工具不是要取代那個審計，而是扮演傳統程式碼交付前 SonarQube 的角色 —— 在交給甲方之前，先用 Slither 把基本的程式碼品質/靜態分析問題掃過一輪，確保交付出去的東西有一個穩定、一致的底線品質，也讓外部審計不會一開始就抓到一堆本來自己就該抓到的低垂果實。
+此工具拆成兩層設計：
 
-因為團隊裡不是每個人都用 Claude Code 開發，這套工具刻意拆成兩層：
-
-1. **底層：語言/工具無關的 CLI**（`scripts/cli.py`）—— 環境健檢、跑掃描、產報告，純 Python + 標準 CLI，任何人在終端機都能跑，不需要 Claude Code。
-2. **上層：人工確認的分類與加註解流程**（本 skill，`SKILL.md`）—— 「這個發現算不算數」需要工程判斷，刻意設計成必須有人確認才能繼續，不管有沒有 Claude Code 輔助都一樣。目前這層是透過 Claude Code 的 skill 對話完成；不用 Claude Code 的同仁可以照 `SKILL.md` 的分類標準手動填 `classification.json`，一樣能走完整個流程。
+1. **第一層：語言/工具無關的 CLI**（`scripts/cli.py`）—— 環境健檢、跑掃描、產報告，純 Python + 標準 Cli。
+2. **第二層：人工確認的分類與加註解流程**（`SKILL.md`）—— 「這個發現算不算數」需要工程判斷，刻意設計成必須有人確認才能繼續，不管有沒有 Claude Code 輔助都一樣。目前這層是透過 Claude Code 的 skill 對話完成；不用 Claude Code 的同仁可以照 `SKILL.md` 的分類標準手動填 `classification.json`，一樣能走完整個流程。
 
 ## 架構
 
 ```
 security-scan/
-├── README.md              ← 你在看的這份
+├── README.md              
 ├── SKILL.md                ← Claude Code skill：把 CLI + AI 分類/加註解串成完整流程
 ├── references/
-│   └── pitfalls.md         ← 實測踩過的坑（foundry.toml 陷阱、OZ 版本判斷、
+│   └── pitfalls.md         ← 一些開發時遇過的問題（foundry.toml 陷阱、OZ 版本判斷、
 │                              slither-disable-next-line 失效、PDF 中文字型）
 └── scripts/
     ├── cli.py              ← 統一入口：check / scan / report 三個子指令
@@ -38,7 +36,7 @@ security-scan/
 | 3 | 加抑制註解 | **人工確認** | 無 CLI 子指令（Claude 依 SKILL.md 規則加註解，或工程師手動加） |
 | 4 | 產出 report.md + report.pdf | 自動 | `cli.py report` |
 
-Step 2/3 刻意不做成 CLI 子指令 —— 這是這個 kit 的核心設計決定，不是還沒做完：交付前品質關卡的分類判斷必須留在人（工程師本人或工程師 + Claude 一起判斷），不能無人值守自動放行。
+Step 2/3 仍需由工程師個人或與 AI 一起判斷，避免漏報或誤報發生。
 
 ## 使用方式
 
@@ -116,9 +114,7 @@ solc-select install <version> && solc-select use <version>
 python3 -m pip install --user --break-system-packages fpdf2 matplotlib
 ```
 
-為什麼報告套件要裝在系統 python、不能裝在 Slither 的 venv？見 `references/pitfalls.md`（venv 的 pip 曾經壞掉過）。`cli.py report` 已經處理好「自動找到裝有這些套件的 python」，不用手動切換環境變數，除非探測失敗才需要用 `SECURITY_SCAN_REPORT_PYTHON` 指定。
-
-## 已知限制 / 之後可以做的事
+## Future Work
 
 - **尚未支援跨次掃描的增量分類**：每次重跑 Step 2 都要把所有發現重新分類一次，即使跟上次掃描完全相同。之後可以讓分類步驟自動比對上一份 `classification.json`，同一筆發現（同 check + 同位置特徵）沿用舊分類，只把新出現的拿出來問人。
 - **目前只服務單一 repo**：`scripts/` 目前放在這個 repo 的 `.claude/skills/security-scan/` 底下。要在多個甲方專案間重複使用，需要再抽成獨立 repo 或內部套件，讓每個專案用 submodule/複製的方式帶入，並統一維護 `pitfalls.md` 累積的踩坑知識。
