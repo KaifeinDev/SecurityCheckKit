@@ -73,6 +73,68 @@ def make_chart(before_counts, after_counts, out_path):
     plt.close(fig)
 
 
+def compute_grade(classification):
+    """Compute the A/B/C/D executive-summary grade from classification.json.
+
+    Rules (see references/severity_grading.md for the full rationale — this
+    is a deliberately conservative draft, pending manager/client sign-off):
+      D: any High-impact finding not classified A (fixed or false-positive)
+      C: any finding classified C, or left unclassified entirely
+      B: any finding classified B (accepted risk), otherwise
+      A: everything present is classified A (false positive)
+    Order matters: checked top-to-bottom, first match wins.
+    """
+    if classification is None:
+        return {"grade": None, "reason": "尚未提供分類資料（Step 2 未寫入 classification.json），無法計算資安等級。"}
+
+    findings = classification.get("findings", [])
+
+    unresolved_high = [f for f in findings if f.get("impact") == "High" and f.get("category") != "A"]
+    if unresolved_high:
+        return {
+            "grade": "D",
+            "reason": (
+                f"偵測到 {len(unresolved_high)} 項高風險（High）問題尚未排除（分類非 A），"
+                "需修復並重新掃描後才可交付。"
+            ),
+        }
+
+    pending = [f for f in findings if f.get("category") in (None, "C")]
+    if pending:
+        return {
+            "grade": "C",
+            "reason": (
+                f"尚有 {len(pending)} 項待工程團隊人工確認事項（分類為 C 或未分類），"
+                "建議完成確認後再交付。"
+            ),
+        }
+
+    accepted = [f for f in findings if f.get("category") == "B"]
+    if accepted:
+        return {
+            "grade": "B",
+            "reason": (
+                f"無高風險項目及待確認事項，但有 {len(accepted)} 項已知風險經工程團隊評估為可接受風險"
+                "（分類為 B），詳見附件。"
+            ),
+        }
+
+    return {"grade": "A", "reason": "掃描範圍內無待處理或已知風險項目，詳見附件完整分類明細。"}
+
+
+def render_executive_summary(grade_info, before_counts, after_counts):
+    if grade_info["grade"] is None:
+        return f"_{grade_info['reason']}_\n"
+    total_before = sum(before_counts.values())
+    total_after = sum(after_counts.values())
+    return (
+        f"**本案資安等級：{grade_info['grade']}**\n\n"
+        f"{grade_info['reason']}\n\n"
+        f"掃描共發現 {total_before} 項（忽略前），經過濾與人工分類後剩餘 {total_after} 項未忽略。"
+        "完整分類明細與判定依據見「完整分類明細」章節與附件。\n"
+    )
+
+
 def render_env_table(env):
     if not env:
         return "_未提供掃描環境資訊（Step 1 未寫入 scan_env.json）。_\n"
@@ -181,6 +243,7 @@ def main() -> None:
     make_chart(before_counts, after_counts, chart_path)
 
     scan_date = (env or {}).get("scan_date", "N/A")
+    grade_info = compute_grade(classification)
 
     report = f"""# 智能合約安全檢測報告
 
@@ -189,28 +252,33 @@ def main() -> None:
 
 ---
 
-## 1. 掃描環境資訊
+## 1. 摘要結論（Executive Summary）
+
+{render_executive_summary(grade_info, before_counts, after_counts)}
+---
+
+## 2. 掃描環境資訊
 
 {render_env_table(env)}
 ---
 
-## 2. 摘要統計
+## 3. 摘要統計
 
 {render_summary_table(before_counts, after_counts)}
 ---
 
-## 3. 忽略前後對照圖表
+## 4. 忽略前後對照圖表
 
 ![Findings by severity, before vs after](severity_chart.png)
 
 ---
 
-## 4. 完整分類明細
+## 5. 完整分類明細
 
 {render_classification_detail(classification)}
 ---
 
-## 5. 附錄：C 類待人工確認清單
+## 6. 附錄：C 類待人工確認清單
 
 {render_c_class_appendix(classification)}
 """
