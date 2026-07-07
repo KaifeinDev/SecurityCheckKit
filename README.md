@@ -1,0 +1,125 @@
+# security-scan：交付前 Slither 安全掃描 Kit
+
+## 這是什麼、為什麼存在
+
+公司幫甲方開發合約後，甲方通常會自己另外找第三方審計。這套工具不是要取代那個審計，而是扮演傳統程式碼交付前 SonarQube 的角色 —— 在交給甲方之前，先用 Slither 把基本的程式碼品質/靜態分析問題掃過一輪，確保交付出去的東西有一個穩定、一致的底線品質，也讓外部審計不會一開始就抓到一堆本來自己就該抓到的低垂果實。
+
+因為團隊裡不是每個人都用 Claude Code 開發，這套工具刻意拆成兩層：
+
+1. **底層：語言/工具無關的 CLI**（`scripts/cli.py`）—— 環境健檢、跑掃描、產報告，純 Python + 標準 CLI，任何人在終端機都能跑，不需要 Claude Code。
+2. **上層：人工確認的分類與加註解流程**（本 skill，`SKILL.md`）—— 「這個發現算不算數」需要工程判斷，刻意設計成必須有人確認才能繼續，不管有沒有 Claude Code 輔助都一樣。目前這層是透過 Claude Code 的 skill 對話完成；不用 Claude Code 的同仁可以照 `SKILL.md` 的分類標準手動填 `classification.json`，一樣能走完整個流程。
+
+## 架構
+
+```
+security-scan/
+├── README.md              ← 你在看的這份
+├── SKILL.md                ← Claude Code skill：把 CLI + AI 分類/加註解串成完整流程
+├── references/
+│   └── pitfalls.md         ← 實測踩過的坑（foundry.toml 陷阱、OZ 版本判斷、
+│                              slither-disable-next-line 失效、PDF 中文字型）
+└── scripts/
+    ├── cli.py              ← 統一入口：check / scan / report 三個子指令
+    ├── env_check.py        ← Step 0：環境健檢（cli.py check 的實作）
+    ├── scan.py             ← Step 1：跑 slither + 過濾 + 蒐集環境資訊（cli.py scan 的實作）
+    ├── filter_results.py   ← 依 src 路徑過濾 slither JSON（被 scan.py 呼叫，也可獨立用）
+    ├── report.py           ← Step 4：串 build_report.py + md_to_pdf.py（cli.py report 的實作）
+    ├── build_report.py     ← 產生 report.md + severity_chart.png
+    └── md_to_pdf.py        ← 把 report.md 轉成 report.pdf（含 CJK 字型處理）
+```
+
+流程對照表：
+
+| Step | 內容 | 誰負責 | 對應指令 |
+|---|---|---|---|
+| 0 | 環境健檢 | 自動 | `cli.py check` |
+| 1 | 跑 Slither + 過濾 | 自動 | `cli.py scan` |
+| 2 | 分類 A/B/C | **人工確認** | 無 CLI 子指令，寫 `classification.json`（Claude 輔助分類或手動填都可） |
+| 3 | 加抑制註解 | **人工確認** | 無 CLI 子指令（Claude 依 SKILL.md 規則加註解，或工程師手動加） |
+| 4 | 產出 report.md + report.pdf | 自動 | `cli.py report` |
+
+Step 2/3 刻意不做成 CLI 子指令 —— 這是這個 kit 的核心設計決定，不是還沒做完：交付前品質關卡的分類判斷必須留在人（工程師本人或工程師 + Claude 一起判斷），不能無人值守自動放行。
+
+## 使用方式
+
+### 有 Claude Code：跑 `/security-scan`
+
+在專案根目錄的 Claude Code 對話裡輸入 `/security-scan`（要含依賴套件本身的發現則用 `/security-scan --full-audit`）。Claude 會照 `SKILL.md` 的步驟走：自動跑 Step 0/1（呼叫下面的 CLI），把發現列給你看並等你確認分類（Step 2），確認後才加註解（Step 3），最後自動產出報告（Step 4）。
+
+### 不用 Claude Code：直接跑 CLI
+
+環境需求：Foundry（`forge`）、Slither（`slither`，可以裝在 venv）、系統 python 需要 `fpdf2` + `matplotlib`（見下方「環境安裝」）。
+
+```bash
+# Step 0：環境健檢，exit code 0 才代表可以往下走
+python3 .claude/skills/security-scan/scripts/cli.py check --src-prefix src/
+
+# Step 1：跑掃描，輸出到指定目錄
+python3 .claude/skills/security-scan/scripts/cli.py scan \
+  --out-dir /tmp/security-scan \
+  --src-prefix src/
+# --full-audit 則連 lib/ 依賴套件的發現也一併保留
+
+# Step 2：人工判斷每筆發現是 A（誤報）/ B（可接受風險）/ C（待確認），
+# 依 SKILL.md「Step 2」的分類標準，手動寫一份 classification.json
+# （格式範例見 SKILL.md）
+
+# Step 3：對 A/B 類項目手動加上區塊式抑制註解
+#   // slither-disable-start <check>
+#   // Dev Note: <理由>
+#   <程式碼>
+#   // slither-disable-end <check>
+# 改完後重新跑一次 Step 1（存到不同 --out-dir，例如 /tmp/security-scan/after），
+# 確認 C 類項目仍然原封不動出現在新的掃描結果裡
+
+# Step 4：產出報告
+python3 .claude/skills/security-scan/scripts/cli.py report \
+  --before /tmp/security-scan/results_before.json \
+  --after  /tmp/security-scan/after/results_before.json \
+  --classification /tmp/security-scan/classification.json \
+  --env /tmp/security-scan/scan_env.json \
+  --out-dir ./security-scan-report
+```
+
+`report` 的 `--classification` / `--env` 是選填 —— 沒提供時，報告對應章節會註明「未提供」而不是報錯，方便只想快速看一次掃描結果、還不想走完整分類流程的情境。
+
+### CLI 子指令細節
+
+**`cli.py check`**（`env_check.py`）
+- 檢查 `foundry.toml` 存在且 `src` 不是危險的 `"."`
+- 跑 `forge build`
+- 掃描 `--src-prefix` 底下的 `.sol` 檔，比對 OpenZeppelin v4/v5 API 特徵（`__UUPSUpgradeable_init`、`_beforeTokenTransfer` vs `_update`、`__Ownable_init` 有無參數），同一檔案內出現互斥版本特徵會被標成 `CONFLICTING` 並要求人工處理，**不會自動選版本**
+- 蒐集 solc / slither / forge 版本與 `lib/` 底下每個相依套件的版本（git tag 或 `package.json`）
+- exit code：0 = 全部通過；1 = 有項目需要人工處理
+
+**`cli.py scan`**（`scan.py`）
+- 跑 `slither . --json`
+- 用 `filter_results.is_own_finding` 過濾（`--full-audit` 跳過過濾）
+- 寫 `results_raw.json` / `results_before.json` / `scan_env.json` 到 `--out-dir`
+- 印出摘要表（check / impact / 位置 / 描述）方便直接看
+
+**`cli.py report`**（`report.py`）
+- 呼叫 `build_report.py` 產生 `report.md` + `severity_chart.png`
+- 呼叫 `md_to_pdf.py` 轉成 `report.pdf`（`--skip-pdf` 可跳過這步，只留 markdown）
+- 自動探測系統上哪個 python 裝有 `fpdf2` + `matplotlib`（即使目前在 Slither 的 venv 底下執行也一樣能找到系統 python），找不到就用 `SECURITY_SCAN_REPORT_PYTHON` 環境變數指定
+- `--font` 可指定 CJK 字型路徑（對應 `md_to_pdf.py` 的 `SECURITY_SCAN_CJK_FONT`）
+
+### 環境安裝
+
+```bash
+# Slither（建議裝在 venv，避免污染系統 python）
+python3 -m venv venv && source venv/bin/activate
+pip install slither-analyzer
+solc-select install <version> && solc-select use <version>
+
+# 報告產生需要的套件，裝在系統 python（不是上面的 venv）
+python3 -m pip install --user --break-system-packages fpdf2 matplotlib
+```
+
+為什麼報告套件要裝在系統 python、不能裝在 Slither 的 venv？見 `references/pitfalls.md`（venv 的 pip 曾經壞掉過）。`cli.py report` 已經處理好「自動找到裝有這些套件的 python」，不用手動切換環境變數，除非探測失敗才需要用 `SECURITY_SCAN_REPORT_PYTHON` 指定。
+
+## 已知限制 / 之後可以做的事
+
+- **尚未支援跨次掃描的增量分類**：每次重跑 Step 2 都要把所有發現重新分類一次，即使跟上次掃描完全相同。之後可以讓分類步驟自動比對上一份 `classification.json`，同一筆發現（同 check + 同位置特徵）沿用舊分類，只把新出現的拿出來問人。
+- **目前只服務單一 repo**：`scripts/` 目前放在這個 repo 的 `.claude/skills/security-scan/` 底下。要在多個甲方專案間重複使用，需要再抽成獨立 repo 或內部套件，讓每個專案用 submodule/複製的方式帶入，並統一維護 `pitfalls.md` 累積的踩坑知識。
+- **`cli.py check` 的 OZ 版本偵測是特徵比對，不是語意分析**：只認得目前記錄在 `pitfalls.md` 裡的幾個 v4/v5 API 特徵，換一種完全不同的相依套件（例如非 OpenZeppelin 的合約庫）不會被偵測到，遇到會直接跳過、不會誤判。
