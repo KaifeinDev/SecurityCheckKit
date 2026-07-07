@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Foundry build artifacts under test fixtures (regenerable via forge build)
+test-fixtures/**/cache/
+test-fixtures/**/out/
