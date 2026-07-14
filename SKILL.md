@@ -163,7 +163,7 @@ python3 -m pip install --user --break-system-packages fpdf2 matplotlib
 
 `cli.py report` 會自動探測「哪個 python 真的裝了 fpdf2/matplotlib」，就算目前在 slither 的 venv 底下執行也能找到系統 python；找不到時會清楚報錯並提示設定 `SECURITY_SCAN_REPORT_PYTHON` 環境變數指向正確的 python。
 
-`md_to_pdf.py` 會自動找系統上的 CJK 字型（含優先嘗試將可變字重字型切出 Regular/Bold 兩個靜態字重，快取於 `~/.cache/security-scan-kit/fonts/`，讓標題真正以粗體呈現而非只放大字級）；如果找不到，會清楚報錯並提示設定 `SECURITY_SCAN_CJK_FONT`（可選搭配 `SECURITY_SCAN_CJK_FONT_BOLD`）環境變數指向涵蓋中文字的字型檔（`.ttc`/`.ttf`），也可以用 `cli.py report --font <path> [--font-bold <path>]` 直接傳入。
+`md_to_pdf.py` 會自動找系統上的 CJK 字型（含優先嘗試將可變字重字型切出 Regular/Bold 兩個靜態字重，快取於 `~/.cache/security-check-kit/fonts/`，讓標題真正以粗體呈現而非只放大字級）；如果找不到，會清楚報錯並提示設定 `SECURITY_SCAN_CJK_FONT`（可選搭配 `SECURITY_SCAN_CJK_FONT_BOLD`）環境變數指向涵蓋中文字的字型檔（`.ttc`/`.ttf`），也可以用 `cli.py report --font <path> [--font-bold <path>]` 直接傳入。
 
 **`cli.py report` 的 exit code 就是交付閘門**（詳見 `references/severity_grading.md`）：
 

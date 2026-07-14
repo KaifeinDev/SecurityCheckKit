@@ -1,4 +1,4 @@
-# security-scan
+# SecurityCheckKit
 
 在交付前，使用此工具做靜態分析並生成簡易自檢報告，確保交付的品質穩定性。
 
@@ -10,7 +10,7 @@
 ## 架構
 
 ```
-security-scan/
+SecurityCheckKit/
 ├── README.md              
 ├── SKILL.md                ← Claude Code skill：把 CLI + AI 分類/加註解串成完整流程
 ├── references/
@@ -60,7 +60,7 @@ Step 2/3 仍需由工程師個人或與 AI 一起判斷，避免漏報或誤報�
    ```bash
    cd <新專案根目錄>
    mkdir -p .claude/skills
-   git submodule add <security-scan-kit 的 repo URL> .claude/skills/security-scan
+   git submodule add <SecurityCheckKit 的 repo URL> .claude/skills/security-scan
    ```
 
    `git submodule add` 一定會把整個 repo（含 `test-fixtures/`）拉下來，沒有「只抓部分路徑」的選項。如果想讓工作目錄乾淨、不帶 `test-fixtures/`，接著設 sparse-checkout（cone mode 下根目錄檔案預設保留，只有你指定的子目錄會被 checkout）：

@@ -18,7 +18,7 @@ Font resolution order if --font is not given:
     1. $SECURITY_SCAN_CJK_FONT (+ optional $SECURITY_SCAN_CJK_FONT_BOLD) env vars
     2. A variable-weight CJK font (e.g. a WSL-mounted Noto Sans TC), instanced
        into static Regular/Bold weights on first use and cached under
-       ~/.cache/security-scan-kit/fonts/ — this is what gives real bold
+       ~/.cache/security-check-kit/fonts/ — this is what gives real bold
        headings instead of Regular reused under the "B" style
     3. find_cjk_font()'s existing candidates (common Linux paths / fc-match /
        WSL-mounted msyh.ttc), paired with a same-directory bold sibling
@@ -67,7 +67,7 @@ BOLD_SIBLINGS = {
     "NotoSansCJK-Regular.ttc": "NotoSansCJK-Bold.ttc",
 }
 
-FONT_CACHE_DIR = os.path.expanduser("~/.cache/security-scan-kit/fonts")
+FONT_CACHE_DIR = os.path.expanduser("~/.cache/security-check-kit/fonts")
 
 
 def find_cjk_font() -> str:
