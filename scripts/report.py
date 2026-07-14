@@ -76,10 +76,16 @@ def main() -> None:
         build_cmd += ["--classification", args.classification]
     if args.env:
         build_cmd += ["--env", args.env]
-    subprocess.run(build_cmd, check=True)
+    # build_report.py's exit code carries the delivery-gate verdict (0 = Tier
+    # 1/2 deliverable, 3/4 = internal-only report, 2 = validation error, see
+    # its docstring). Tier 3/4 still produce a (watermarked) report + PDF for
+    # internal tracking, so only a validation error aborts here.
+    gate_code = subprocess.run(build_cmd).returncode
+    if gate_code not in (0, 3, 4):
+        raise SystemExit(gate_code)
 
     if args.skip_pdf:
-        return
+        raise SystemExit(gate_code)
 
     md_path = os.path.join(args.out_dir, "report.md")
     pdf_path = os.path.join(args.out_dir, "report.pdf")
@@ -87,6 +93,7 @@ def main() -> None:
     if args.font:
         pdf_cmd += ["--font", args.font]
     subprocess.run(pdf_cmd, check=True)
+    raise SystemExit(gate_code)
 
 
 if __name__ == "__main__":

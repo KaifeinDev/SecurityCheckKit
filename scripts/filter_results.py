@@ -12,6 +12,37 @@ import argparse
 import json
 
 
+def extract_findings(results_json: dict | None) -> list[dict]:
+    """Flatten `slither --json` detectors into the flat fields the pipeline
+    passes around (skeleton generation, report rendering, and the
+    classification<->scan reconciliation). File/lines come from the first
+    element that has a source mapping — keep this the single definition, so
+    the fingerprint scan.py writes into classification_skeleton.json is the
+    same one build_report.py matches against."""
+    findings = []
+    if not results_json:
+        return findings
+    for d in results_json.get("results", {}).get("detectors", []):
+        file, lines = "?", []
+        for el in d.get("elements", []):
+            sm = el.get("source_mapping") or {}
+            if sm.get("filename_relative"):
+                file = sm["filename_relative"]
+                lines = sm.get("lines") or []
+                break
+        findings.append({
+            "check": d.get("check", "?"),
+            "impact": d.get("impact", "Informational"),
+            "file": file,
+            "lines": lines,
+            # Slither descriptions embed tabs/newlines for terminal output;
+            # collapse them — they break markdown tables and CJK fonts have
+            # no glyph for \t.
+            "description": " ".join((d.get("description") or "").split()),
+        })
+    return findings
+
+
 def is_own_finding(detector: dict, src_prefixes: list[str]) -> bool:
     for element in detector.get("elements", []):
         rel = (element.get("source_mapping", {}) or {}).get("filename_relative") or ""

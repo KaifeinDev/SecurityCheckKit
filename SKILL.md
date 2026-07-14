@@ -1,6 +1,6 @@
 ---
 name: security-scan
-description: Use this skill when the user asks to run a smart contract security scan, Slither audit, vulnerability scan, or wants a security report for a Solidity/Foundry project — e.g. "跑一次安全掃描", "用 slither 掃這個專案", "產出安全檢測報告", "run a slither scan", "security audit this contract". Drives the full Slither scan → AI triage (A/B/C) → inline suppression comments → PDF report pipeline for Foundry + OpenZeppelin upgradeable-contract projects.
+description: Use this skill when the user asks to run a smart contract security scan, Slither audit, vulnerability scan, or wants a security report for a Solidity/Foundry project — e.g. "跑一次安全掃描", "用 slither 掃這個專案", "產出安全檢測報告", "run a slither scan", "security audit this contract". Drives the full Slither scan → AI triage (A/B/C/D) → inline suppression comments → PDF report pipeline for Foundry + OpenZeppelin upgradeable-contract projects.
 argument-hint: "[--full-audit]"
 ---
 
@@ -15,7 +15,7 @@ Step 0/1/4（環境健檢、掃描、產報告）背後都是呼叫 `scripts/cli
 ## 前提與限制（不可協商）
 
 1. 只能新增「註解」，絕對不能修改任何程式碼的商業邏輯、變數名稱、函式參數或執行流程。
-2. 如果不確定某個發現是否可以忽略，一律歸類為 C 類（待人工確認），絕不自行加 disable 標籤。
+2. 如果不確定某個發現是否可以忽略，一律歸類為 D 類（待人工確認），絕不自行加 disable 標籤。
 3. Step 2（分類）與 Step 3（加註解）是**人工確認關卡** —— 執行前必須先把內容列給使用者看，明確等待使用者回覆確認才能繼續。其餘步驟（環境健檢、掃描、產報告）可以自動執行，但一旦遇到「換依賴版本也解決不了、必須改動合約呼叫方式」的情況，一律停下來問使用者，不准自己動手改商業邏輯。
 4. `--full-audit` 參數：預設只掃描並報告專案自己的原始碼（排除 `lib/` 等相依套件）；帶這個參數才把相依套件本身的發現也納入報告。
 
@@ -57,18 +57,20 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 - `results_raw.json` — 未過濾的原始 `slither --json` 輸出
 - `results_before.json` — 過濾後結果（或 `--full-audit` 時等於 raw）
 - `scan_env.json` — 掃描環境資訊（`scan_date`/`project_path`/`git_commit`/`solc_version`/`slither_version`/`forge_version`/`dependencies`），供 Step 4 使用
+- `classification_skeleton.json` — Step 2 的起點：每筆發現已預填 `id`/`check`/`impact`/`file`/`lines`/`description`，只留 `category` 與 `dev_note` 空白
 
 把 CLI 印出的摘要表內容列給使用者看。
 
-## Step 2：分類 A/B/C 【人工確認關卡】
+## Step 2：分類 A/B/C/D 【人工確認關卡】
 
-分類標準：
+分類標準（依嚴重性由高到低排列，**A 是最需要處理的項目，不是最無害的**——這跟很多人直覺的「A 類=可以放著不管」相反，務必留意）：
 
-- **A. 可直接忽略（False Positive）**：工具因靜態分析限制誤判，實際上有安全機制保護（如已有 nonReentrant、已做過 zero-address 檢查、OZ upgradeable 的 `__gap` 慣例等）。
+- **A. 已確認漏洞，需修復（Confirmed Vulnerability）**：涉及資金流向（transfer/call/delegatecall）或 access-control 邏輯本身（onlyOwner 判斷的實作邏輯，不是只是被 onlyOwner 保護的一般函式），且已確認是真的問題，不是誤判、也不是可接受的已知風險。**這類項目不能被加抑制註解**——加了等於把真漏洞藏起來不讓外部審計看到。
 - **B. 已知風險但業務上可接受（Accepted Risk）**：只有 owner/admin 能呼叫、已有其他層級防護、風險極小且有明確理由。
-- **C. 待人工確認**：涉及資金流向（transfer/call/delegatecall）、access-control 邏輯本身（onlyOwner 判斷的實作邏輯，不是只是被 onlyOwner 保護的一般函式）、或信心不足的項目。**信心不足時一律歸類 C，不要猜。**
+- **C. 可直接忽略（False Positive）**：工具因靜態分析限制誤判，實際上有安全機制保護（如已有 nonReentrant、已做過 zero-address 檢查、OZ upgradeable 的 `__gap` 慣例等）。
+- **D. 待人工確認**：信心不足，還無法判斷屬於 A/B/C 哪一類的項目。**信心不足時一律歸類 D，不要用猜的塞進 A/B/C。**
 
-把每一筆分類寫進 `/tmp/security-scan/classification.json`：
+**從 skeleton 開始，不要手打**：把 Step 1 產出的 `classification_skeleton.json` 複製成 `/tmp/security-scan/classification.json`，只填每筆的 `category` 與 `dev_note`，**不要改動預填的 `check`/`impact`/`file`/`lines`**（Step 4 會逐筆核對這些欄位跟掃描結果是否一致，不一致直接拒絕產報告；`impact` 打錯以前會讓資安等級虛高，現在會被擋下）：
 
 ```json
 {
@@ -79,19 +81,39 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
       "impact": "Low",
       "file": "src/Token.sol",
       "lines": [38],
-      "description": "<原始 slither 描述>",
-      "category": "A",
-      "dev_note": "<具體理由，禁止空泛字眼如「沒問題」>"
+      "description": "<skeleton 預填的 slither 描述>",
+      "category": "C",
+      "dev_note": "<具體理由，禁止空泛字眼如「沒問題」；B/C 類必填>"
     }
-  ]
+  ],
+  "manual_findings": []
 }
 ```
 
-把 A/B/C 三類清單列給使用者看（含每筆的具體理由），**明確等待使用者確認**（例如回覆「確認」或「ok」）才能進入 Step 3。使用者若要求把某筆從 A/B 移到 C，或反過來，更新 `classification.json` 後重新給使用者看一次。
+**人工複核發現（manual_findings）**：分類時必然會讀合約原始碼 —— 這正是發現「工具抓不到的問題」（壞掉的權限檢查、該保護而沒保護的函式、缺滑點保護等業務邏輯問題）的最好時機。看到任何 Slither 沒報的問題，寫進 `manual_findings[]`，一樣列給使用者確認：
+
+```json
+{
+  "id": "M1",
+  "title": "<一句話標題>",
+  "severity": "Critical|High|Medium|Low|Informational",
+  "file": "src/Vault.sol",
+  "lines": [32, 35],
+  "description": "<問題說明與影響>",
+  "category": "A|B|D",
+  "dev_note": "<判斷依據；人工發現不存在 C 誤報，確認不是問題就直接移除>"
+}
+```
+
+人工發現會進報告的「人工複核發現」章節並參與資安等級計算（Critical/High 直接判第四級）。**特別留意**：凡是分類理由想寫「僅 owner/admin 可呼叫所以可接受」，必須先實際檢查該 modifier / require 的實作邏輯是不是真的有效，並把檢查結果寫進 dev_note —— 權限檢查本身壞掉是 Slither 抓不到的典型漏報。
+
+掃描結果裡的**每一筆**發現都要分類：Step 4 會把 classification.json 跟掃描結果逐筆核對，漏掉的一律視同 D（待確認），未分類的 High 直接把等級打成第四級。
+
+把 A/B/C/D 四類清單與 manual_findings 列給使用者看（含每筆的具體理由），**明確等待使用者確認**（例如回覆「確認」或「ok」）才能進入 Step 3。使用者若要求把某筆從一類移到另一類，更新 `classification.json` 後重新給使用者看一次。
 
 ## Step 3：加抑制註解 【人工確認關卡】
 
-只處理 `classification.json` 裡 `category` 為 `A` 或 `B` 的項目。
+只處理 `classification.json` 裡 `category` 為 `B` 或 `C` 的項目——這兩類是「不是真的需要修的東西」，才適合抑制。`A`（已確認需修復）與 `D`（待確認）絕對不能加抑制註解，加了會讓真正的漏洞或還沒判斷清楚的項目從掃描結果裡消失。
 
 1. 先列出打算修改的檔案與行號、每處要用的 detector 名稱、Dev Note 內容，等使用者明確回覆確認後才動手。
 2. 格式**必須**用區塊式，理由見 `pitfalls.md` #3：
@@ -113,7 +135,7 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
      /tmp/security-scan/results_after.json \
      --src-prefix src/
    ```
-   回報忽略前後的數量對比，並明確確認 C 類項目（不該被動到的那些）仍然原封不動出現在 `results_after.json` 裡 —— 代表沒有被誤蓋掉。
+   回報忽略前後的數量對比，並明確確認 A 類（已確認需修復）與 D 類（待確認）項目（不該被動到的那些）仍然原封不動出現在 `results_after.json` 裡 —— 代表沒有被誤蓋掉。如果這個 Step 整個被跳過（例如專案刻意保持原狀作為比對基準），要明確告訴使用者「忽略前/忽略後」在報告裡會顯示相同數字，並解釋原因，避免對方誤以為抑制註解沒生效。
 
 ## Step 4：產出完整報告（自動）
 
@@ -136,7 +158,14 @@ python3 -m pip install --user --break-system-packages fpdf2 matplotlib
 
 `md_to_pdf.py` 會自動找系統上的 CJK 字型；如果找不到，會清楚報錯並提示設定 `SECURITY_SCAN_CJK_FONT` 環境變數指向一個涵蓋中文字的字型檔（`.ttc`/`.ttf`），也可以用 `cli.py report --font <path>` 直接傳入。
 
+**`cli.py report` 的 exit code 就是交付閘門**（詳見 `references/severity_grading.md`）：
+
+- `0` = 第一/二級，報告可作為交付文件
+- `3` = 第三級或尚未評估、`4` = 第四級 —— 報告照常產出，但開頭帶「內部工作版本 — 不可作為交付文件」標記，只能用於內部追蹤，**不可交給甲方**
+- `2` = classification.json 驗證失敗（缺漏對不上掃描結果、category/impact 值錯誤、B/C 缺 dev_note 等），不會產出報告，逐筆錯誤在 stderr —— 修正後重跑
+
 最後跟使用者回報：
 - `report.pdf` 的路徑
-- 忽略前後的數量對比
-- 提醒 C 類清單已經包含在報告附錄裡，不用再額外用文字轉達
+- **資安等級與閘門結果**：第三/四級要明確告知「這份是內部工作版本，不能交付」，並列出把等級卡住的項目
+- 工具原始輸出 vs 交付版掃描結果的數量對比（後者 = 甲方重掃可重現的數字）
+- 提醒 D 類與未分類清單已經包含在報告附錄裡，不用再額外用文字轉達

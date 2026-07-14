@@ -32,7 +32,7 @@ security-scan/
 |---|---|---|---|
 | 0 | 環境健檢 | 自動 | `cli.py check` |
 | 1 | 跑 Slither + 過濾 | 自動 | `cli.py scan` |
-| 2 | 分類 A/B/C | **人工確認** | 無 CLI 子指令，寫 `classification.json`（Claude 輔助分類或手動填都可） |
+| 2 | 分類 A/B/C/D + 記錄人工發現 | **人工確認** | 無 CLI 子指令：把 Step 1 產出的 `classification_skeleton.json` 複製成 `classification.json` 填空（Claude 輔助分類或手動填都可） |
 | 3 | 加抑制註解 | **人工確認** | 無 CLI 子指令（Claude 依 SKILL.md 規則加註解，或工程師手動加） |
 | 4 | 產出 report.md + report.pdf | 自動 | `cli.py report` |
 
@@ -58,17 +58,19 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
   --src-prefix src/
 # --full-audit 則連 lib/ 依賴套件的發現也一併保留
 
-# Step 2：人工判斷每筆發現是 A（誤報）/ B（可接受風險）/ C（待確認），
-# 依 SKILL.md「Step 2」的分類標準，手動寫一份 classification.json
+# Step 2：把 Step 1 產出的 classification_skeleton.json 複製成 classification.json，
+# 依 SKILL.md「Step 2」的分類標準，逐筆填入 category（A 已確認需修復 / B 可接受風險 /
+# C 誤報 / D 待確認）與 dev_note；預填的 check/impact/file/lines 不要動（Step 4 會核對）。
+# 讀合約時發現的工具外問題（壞掉的權限檢查、缺漏的保護等）寫進 manual_findings[]
 # （格式範例見 SKILL.md）
 
-# Step 3：對 A/B 類項目手動加上區塊式抑制註解
+# Step 3：對 B/C 類項目手動加上區塊式抑制註解
 #   // slither-disable-start <check>
 #   // Dev Note: <理由>
 #   <程式碼>
 #   // slither-disable-end <check>
 # 改完後重新跑一次 Step 1（存到不同 --out-dir，例如 /tmp/security-scan/after），
-# 確認 C 類項目仍然原封不動出現在新的掃描結果裡
+# 確認 A 類（待修復）與 D 類（待確認）項目仍然原封不動出現在新的掃描結果裡
 
 # Step 4：產出報告
 python3 .claude/skills/security-scan/scripts/cli.py report \
@@ -93,12 +95,14 @@ python3 .claude/skills/security-scan/scripts/cli.py report \
 **`cli.py scan`**（`scan.py`）
 - 跑 `slither . --json`
 - 用 `filter_results.is_own_finding` 過濾（`--full-audit` 跳過過濾）
-- 寫 `results_raw.json` / `results_before.json` / `scan_env.json` 到 `--out-dir`
+- 寫 `results_raw.json` / `results_before.json` / `scan_env.json` / `classification_skeleton.json` 到 `--out-dir`（skeleton 已預填每筆發現的所有欄位，Step 2 只需填 `category` / `dev_note`，杜絕手抄造成的分類檔與掃描結果脫鉤）
 - 印出摘要表（check / impact / 位置 / 描述）方便直接看
 
 **`cli.py report`**（`report.py`）
-- 呼叫 `build_report.py` 產生 `report.md` + `severity_chart.png`
+- 先驗證 `classification.json`：逐筆與 `--before` 的掃描結果核對（比對鍵：check + file + 起始行號），對不上的過期項目、無效的 `category`/`impact` 值、`impact` 與掃描結果不符、B/C 類缺 `dev_note`，一律列出錯誤並以 exit code `2` 結束、**不產出報告**；掃描有但分類檔漏掉的發現則視同「未分類」（判級時當 D 算，未分類的 High 直接第四級）
+- 呼叫 `build_report.py` 產生 `report.md` + `severity_chart.png`（含 Executive Summary 資安等級、檢測方法與範圍限制聲明、人工複核發現章節）
 - 呼叫 `md_to_pdf.py` 轉成 `report.pdf`（`--skip-pdf` 可跳過這步，只留 markdown）
+- **exit code 即交付閘門**（見 `references/severity_grading.md`）：`0` = 第一/二級可交付；`3`/`4` = 第三/四級（報告照常產出但帶「內部工作版本」標記，僅供內部追蹤）；`2` = 驗證失敗
 - 自動探測系統上哪個 python 裝有 `fpdf2` + `matplotlib`（即使目前在 Slither 的 venv 底下執行也一樣能找到系統 python），找不到就用 `SECURITY_SCAN_REPORT_PYTHON` 環境變數指定
 - `--font` 可指定 CJK 字型路徑（對應 `md_to_pdf.py` 的 `SECURITY_SCAN_CJK_FONT`）
 
@@ -116,6 +120,7 @@ python3 -m pip install --user --break-system-packages fpdf2 matplotlib
 
 ## Future Work
 
-- **尚未支援跨次掃描的增量分類**：每次重跑 Step 2 都要把所有發現重新分類一次，即使跟上次掃描完全相同。之後可以讓分類步驟自動比對上一份 `classification.json`，同一筆發現（同 check + 同位置特徵）沿用舊分類，只把新出現的拿出來問人。
+- **尚未支援跨次掃描的增量分類**：每次重跑 Step 2 都要把所有發現重新分類一次，即使跟上次掃描完全相同。`classification_skeleton.json` 已經把「預填欄位」這一半做掉了，且報告端的比對鍵（check + file + 起始行號）可以直接沿用；剩下的是讓 skeleton 產生時自動比對上一份 `classification.json`，同指紋的發現沿用舊分類，只把新出現的拿出來問人。
+- **已修復漏洞要不要留痕待決**：目前修復後重掃產出的最終報告不會提到「曾發現並已修復」的項目（交付報告只描述交付物現狀，開發過程中修掉的問題不列入）。若之後決定要在交付文件展示修復歷程，或做成 `--include-resolved-history` 選項，需另外設計跨掃描的紀錄保存。
 - **目前只服務單一 repo**：`scripts/` 目前放在這個 repo 的 `.claude/skills/security-scan/` 底下。要在多個甲方專案間重複使用，需要再抽成獨立 repo 或內部套件，讓每個專案用 submodule/複製的方式帶入，並統一維護 `pitfalls.md` 累積的踩坑知識。
 - **`cli.py check` 的 OZ 版本偵測是特徵比對，不是語意分析**：只認得目前記錄在 `pitfalls.md` 裡的幾個 v4/v5 API 特徵，換一種完全不同的相依套件（例如非 OpenZeppelin 的合約庫）不會被偵測到，遇到會直接跳過、不會誤判。

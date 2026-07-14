@@ -1,8 +1,12 @@
 """Convert a (CJK-friendly) markdown report to PDF using fpdf2.
 
 Only supports the small subset of markdown produced by build_report.py:
-headings (#/##/###), horizontal rules (---), bold (**text**), pipe tables,
-image references (![alt](path)), and plain paragraphs/bullets.
+headings (#/##/###), horizontal rules (---), bold (**text**), inline code
+(`text`, rendered as plain text — fpdf2 has no second font to set it in
+monospace, and keeping the backticks just reads as clutter), pipe tables,
+image references (![alt](path)), blockquotes (> text, rendered as a smaller
+plain paragraph), and plain paragraphs/bullets (nested bullets indented two
+spaces per level render with a matching visual indent and hanging wrap).
 
 Usage:
     python3 md_to_pdf.py <report.md> <report.pdf> [--font /path/to/font.ttc]
@@ -65,11 +69,18 @@ def find_cjk_font() -> str:
     )
 
 
+def strip_inline_markup(text: str) -> str:
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"`(.*?)`", r"\1", text)
+    return text
+
+
 def build_pdf(md_path: str, pdf_path: str, font_path: str) -> None:
     md_dir = os.path.dirname(os.path.abspath(md_path))
     with open(md_path, encoding="utf-8") as f:
         raw_lines = f.read().splitlines()
-    lines = [EMOJI_PATTERN.sub("", line).rstrip() for line in raw_lines]
+    # CJK fonts typically have no glyph for \t, and fpdf2 warns per character.
+    lines = [EMOJI_PATTERN.sub("", line).replace("\t", " ").rstrip() for line in raw_lines]
 
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -83,7 +94,23 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str) -> None:
         # A table rendered just before this can leave the x cursor mid-page;
         # multi_cell() then has ~0 width left and throws. See pitfalls.md #5.
         pdf.set_x(pdf.l_margin)
-        pdf.multi_cell(0, gap, text)
+        # fpdf2 defaults multi_cell() to JUSTIFY, which stretches gaps at the
+        # few Latin-word space characters in otherwise-space-free CJK text
+        # into huge visible gaps. Left-align instead.
+        pdf.multi_cell(0, gap, text, align="L")
+
+    def bullet(text, indent_mm=0, size=11, gap=6):
+        pdf.set_font("Body", "", size)
+        # Draw the bullet marker in its own fixed cell and anchor the text in
+        # a multi_cell right after it. A long space-free CJK sentence is one
+        # "word" to fpdf2's line breaker: rendered as a single para("• …") it
+        # gets pushed whole to the next line, stranding the bullet alone on
+        # its own line. Anchoring the text cell also makes wrapped lines
+        # continue under the text (hanging indent) instead of under the
+        # bullet.
+        pdf.set_x(pdf.l_margin + indent_mm)
+        pdf.cell(5, gap, "•")
+        pdf.multi_cell(0, gap, text, align="L")
 
     table_rows: list[str] = []
     in_table = False
@@ -96,17 +123,34 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str) -> None:
         if not rows:
             return
         raw_cells = [r.strip().strip("|").split("|") for r in rows]
-        parsed = [[re.sub(r"\*\*(.*?)\*\*", r"\1", c.strip()) for c in row] for row in raw_cells]
+        parsed = [[strip_inline_markup(c.strip()) for c in row] for row in raw_cells]
         ncols = max(len(r) for r in parsed)
         page_width = pdf.w - pdf.l_margin - pdf.r_margin
         col_width = page_width / ncols
+        line_height = 5
+        x0 = pdf.l_margin
         for i, row in enumerate(parsed):
-            pdf.set_x(pdf.l_margin)
             is_bold_row = i == 0 or any("**" in c for c in raw_cells[i])
             pdf.set_font("Body", "B" if is_bold_row else "", 9)
-            for cell in row:
-                pdf.cell(col_width, 8, cell, border=1)
-            pdf.ln(8)
+            # Wrap each cell's text first so long content (e.g. a "說明"
+            # column) doesn't overflow past its column and overlap the next
+            # one — pdf.cell() never wraps or clips, it just draws past its
+            # nominal width. See pitfalls.md #5 for the related cursor bug.
+            cell_lines = [
+                pdf.multi_cell(col_width, line_height, cell, border=0, align="L", dry_run=True, output="LINES")
+                or [""]
+                for cell in row
+            ]
+            row_height = max(len(lines) for lines in cell_lines) * line_height
+            if pdf.get_y() + row_height > pdf.page_break_trigger:
+                pdf.add_page()
+            y0 = pdf.get_y()
+            for ci, cell in enumerate(row):
+                x = x0 + ci * col_width
+                pdf.rect(x, y0, col_width, row_height)
+                pdf.set_xy(x, y0)
+                pdf.multi_cell(col_width, line_height, cell, border=0, align="L")
+            pdf.set_xy(x0, y0 + row_height)
         pdf.ln(4)
         pdf.set_x(pdf.l_margin)
 
@@ -146,13 +190,22 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str) -> None:
             y = pdf.get_y()
             pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
             pdf.ln(4)
+        elif stripped.startswith(">"):
+            clean = strip_inline_markup(stripped.lstrip(">").strip())
+            if clean:
+                para(clean, size=10)
+            else:
+                pdf.ln(3)
         elif stripped.startswith("- ") or stripped.startswith("* "):
-            clean = re.sub(r"\*\*(.*?)\*\*", r"\1", stripped[2:])
-            para(f"• {clean}", size=11)
+            # Nested list items (2 spaces per level in the markdown) get a
+            # matching visual indent.
+            depth = (len(line) - len(line.lstrip(" "))) // 2
+            clean = strip_inline_markup(stripped[2:])
+            bullet(clean, indent_mm=depth * 5)
         elif stripped.startswith("**") and stripped.endswith("**") and len(stripped) > 4:
-            para(stripped.strip("*"), size=11, style="B")
+            para(strip_inline_markup(stripped.strip("*")), size=11, style="B")
         else:
-            clean = re.sub(r"\*\*(.*?)\*\*", r"\1", stripped)
+            clean = strip_inline_markup(stripped)
             para(clean, size=11)
 
     if in_table:

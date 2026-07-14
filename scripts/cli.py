@@ -8,7 +8,7 @@ Subcommands (each maps 1:1 to a SKILL.md step):
     scan    Step 1 - run Slither, filter to project source, collect env info
     report  Step 4 - build report.md + report.pdf from scan/classification artifacts
 
-Step 2 (A/B/C classification) and Step 3 (suppression comments) stay a
+Step 2 (A/B/C/D classification) and Step 3 (suppression comments) stay a
 human-confirmed step by design (see references/pitfalls.md and SKILL.md) —
 there is deliberately no subcommand for them here.
 
