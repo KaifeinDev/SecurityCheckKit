@@ -165,3 +165,21 @@ solc-select install <version> && solc-select use <version>
 python3 -m pip install --user --break-system-packages fpdf2 matplotlib
 ```
 
+## 測試 Fixtures
+
+`test-fixtures/` 底下是兩組已知答案的迴歸測試樣本，合約與掃描結果都是刻意設計、事先寫死的，
+用來驗證這套 kit 本身的判級邏輯有沒有被改壞，不是要交付的產品合約。兩組合起來覆蓋交付閘門
+的兩側，各自附一份完整跑完 Step 1～4 產出的報告：
+
+- **vulnerable-vault** — 第四級（不通過）的 ground truth，未加抑制註解（Step 3 未執行）。
+  合約與已知漏洞明細見 `test-fixtures/vulnerable-vault/VULNERABILITY_CATALOG.md`。
+- **timelock-vault** — 第二級（可交付，需揭露已知風險）的 ground truth，實際執行了 Step 3：
+  `src/TimelockVault.sol.original` 是加抑制註解前的最原始版本，`src/TimelockVault.sol`
+  是加上抑制註解後、實際交付的版本，兩份都保留在 repo 裡方便直接比對。設計細節見
+  `test-fixtures/timelock-vault/FIXTURE_NOTES.md`。
+
+完整報告：
+
+- [第二級｜timelock-vault 報告](test-fixtures/timelock-vault/security-scan-report/report.md)
+- [第四級｜vulnerable-vault 報告](test-fixtures/vulnerable-vault/security-scan-report/report.md)
+

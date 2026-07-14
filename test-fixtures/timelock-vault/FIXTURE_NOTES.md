@@ -59,5 +59,8 @@ python3 ../../scripts/cli.py report \
 # 預期：資安等級第二級、exit code 0、report.md 開頭無「內部工作版本」浮水印
 ```
 
-（若要從頭重掃：先把 `src/TimelockVault.sol` 的 slither-disable 註解拿掉跑 `cli.py scan`
-得到 before/skeleton，再加回註解重掃產 after —— 順序反了會讓 before 變成 0 筆。）
+`src/TimelockVault.sol.original`（無 slither-disable 註解的最原始版本）與
+`src/TimelockVault.sol`（Step 3 加上抑制註解後、實際交付的版本）兩份都保留在 repo 裡，
+方便直接比對兩個階段的差異。若要從頭重掃：把 `TimelockVault.sol.original` 換成
+`TimelockVault.sol` 跑 `cli.py scan` 得到 before/skeleton，再換回加了註解的版本重掃產
+after —— 順序反了會讓 before 變成 0 筆。
