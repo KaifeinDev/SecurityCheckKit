@@ -38,21 +38,19 @@ from filter_results import extract_findings  # noqa: E402
 from md_to_pdf import find_cjk_font  # noqa: E402
 
 IMPACT_ORDER = ["High", "Medium", "Low", "Informational", "Optimization"]
-# Client-facing report copy is pure Chinese; Slither's own identifiers (check
-# names, the impact values quoted inside 原始描述) stay as raw tool output so a
-# client rescan can be correlated line-by-line. These maps are display-only —
-# grading/reconciliation still compare the English values.
-IMPACT_ZH = {"High": "高", "Medium": "中", "Low": "低", "Informational": "資訊性", "Optimization": "最佳化"}
-SEVERITY_ZH = dict(IMPACT_ZH, Critical="危急")
-
-
-def impact_zh(value):
-    return IMPACT_ZH.get(value, value)
-
-
-def severity_zh(value):
-    return SEVERITY_ZH.get(value, value)
+# Severity/impact values are shown verbatim as Slither outputs them (High,
+# Medium, Critical, ...) everywhere in the report — not translated — so a
+# client rescan's raw output can be correlated line-by-line against this
+# document without a translation table in between.
 VALID_CATEGORIES = {"A", "B", "C", "D"}
+# B/C are the only categories a suppression comment may back (see the A/D
+# "不得抑制" rule in render_standards_appendix) — the same dev_note field is
+# reused for both, but the label must say which kind of justification it is.
+SUPPRESSIBLE_CATEGORIES = {"B", "C"}
+
+
+def dev_note_label(category):
+    return "備註（已加上抑制註解）" if category in SUPPRESSIBLE_CATEGORIES else "備註"
 # Manual findings are human-judged, so "Critical" is allowed even though
 # Slither's own scale tops out at High. For grading, Critical >= High.
 MANUAL_SEVERITIES = {"Critical", "High", "Medium", "Low", "Informational"}
@@ -197,7 +195,7 @@ def make_chart(before_counts, after_counts, out_path):
     ax.bar([i - width / 2 for i in x], before_vals, width, label="工具原始輸出", color="#c0392b")
     ax.bar([i + width / 2 for i in x], after_vals, width, label="交付版掃描結果", color="#2e7d32")
     ax.set_xticks(list(x))
-    ax.set_xticklabels([impact_zh(l) for l in labels])
+    ax.set_xticklabels(labels)
     ax.set_ylabel("發現數量")
     ax.set_title("各嚴重度發現數量：工具原始輸出 vs 交付版掃描結果")
     ax.legend()
@@ -357,14 +355,12 @@ def render_summary_table(before_counts, after_counts):
         "重新掃描的結果 —— **亦即甲方使用相同版本 Slither（見「掃描環境資訊」）對交付程式碼自行掃描時，"
         "可重現的數字**。兩者的差異全部來自經人工分類為 B（可接受風險）或 C（誤報）並加上抑制註解的項目，"
         "逐筆理由與註解位置見「完整分類明細」。\n\n"
-        "嚴重程度沿用掃描工具的五個等級：高、中、低、資訊性、最佳化"
-        "（依序對應工具輸出的 High / Medium / Low / Informational / Optimization，"
-        "自行重掃時請以此對照）。\n"
+        "嚴重程度沿用掃描工具原文的五個等級：High、Medium、Low、Informational、Optimization。\n"
     )
     lines = ["| 嚴重程度 | 工具原始輸出 | 交付版掃描結果 | 差異 |", "|---|---|---|---|"]
     for lvl in IMPACT_ORDER:
         b, a = before_counts.get(lvl, 0), after_counts.get(lvl, 0)
-        lines.append(f"| {impact_zh(lvl)} | {b} | {a} | {a - b:+d} |")
+        lines.append(f"| {lvl} | {b} | {a} | {a - b:+d} |")
     total_b, total_a = sum(before_counts.values()), sum(after_counts.values())
     lines.append(f"| **總計** | **{total_b}** | **{total_a}** | **{total_a - total_b:+d}** |")
     return intro + "\n" + "\n".join(lines) + "\n"
@@ -384,15 +380,16 @@ def render_manual_findings(manual, classification_provided):
     for m in manual:
         title = m.get("title") or (m.get("description") or "")[:60]
         loc = f"{m.get('file', '?')}:{format_lines(m.get('lines'))}"
+        scenario = f"／情境 {m['scenario']}" if m.get("scenario") else ""
         lines.append(
-            f"- **編號 {m.get('id')}｜{title}**（嚴重度：{severity_zh(m.get('severity'))}／分類 {m.get('category')}）— {loc}"
+            f"- **編號 {m.get('id')}｜{title}**（嚴重度：{m.get('severity')}／分類 {m.get('category')}{scenario}）— {loc}"
         )
         desc = (m.get("description") or "").replace("\n", " ").strip()
         if desc:
             lines.append(f"  - 說明：{desc}")
         note = m.get("dev_note")
         if note:
-            lines.append(f"  - 工程註記：{note}")
+            lines.append(f"  - {dev_note_label(m.get('category'))}：{note}")
         lines.append("")
     return "\n".join(lines)
 
@@ -427,12 +424,12 @@ def render_classification_detail(effective, classification_provided):
         for item in items:
             ident = f"編號 {item['id']}" if item["id"] is not None else "未編號（不在分類紀錄中）"
             loc = f"{item['file']}:{format_lines(item['lines'])}"
-            lines.append(f"- **{ident}｜{item['check']}**（嚴重度：{impact_zh(item['impact'])}）— {loc}")
+            lines.append(f"- **{ident}｜{item['check']}**（嚴重度：{item['impact']}）— {loc}")
             desc = item["description"].replace("\n", " ").strip()
             if desc:
                 lines.append(f"  - 原始描述：{desc}")
             if item.get("dev_note"):
-                lines.append(f"  - 工程註記：{item['dev_note']}")
+                lines.append(f"  - {dev_note_label(item['category'])}：{item['dev_note']}")
             lines.append("")
     return "\n".join(lines)
 
@@ -454,13 +451,13 @@ def render_standards_appendix():
         "- **D｜待人工確認**：尚無法判定歸屬者一律列此類，不得抑制；判讀信心不足時寧列 D，不猜測分類。\n"
         "- **人工複核發現**：掃描工具輸出之外、由人工閱讀原始碼發現的問題，僅得分類 A／B／D；"
         "經確認非問題者直接自清單移除，不設誤報分類。\n\n"
-        "**整案資安等級（由上而下逐條檢查，符合即定級）**\n\n"
+        "**整案資安等級（以下由第一級至第四級列出定義；實際評定則由高至低逐條檢查，符合任一條件即定為該級）**\n\n"
+        "- **第一級｜可直接交付**：掃描範圍內所有發現均確認為誤報，且無待處理之人工複核發現。\n"
+        "- **第二級｜可交付，需揭露已知風險**：無下列第三、四級情況，但存在 B 類已知風險。\n"
+        "- **第三級｜待確認，不建議交付**：無下列第四級情況，但存在任何 A（已確認未修復）或 D（待確認）項目，"
+        "或有掃描發現未完成分類（未分類一律視同 D，不視同已解決）。\n"
         "- **第四級｜不通過**：存在任一「高」嚴重度且非誤報的掃描發現，或任一「危急／高」的人工複核發現。"
         "高嚴重度項目不得以「可接受風險」定級 —— 只能修復，或確認為誤報。\n"
-        "- **第三級｜待確認，不建議交付**：無上述情況，但存在任何 A（已確認未修復）或 D（待確認）項目，"
-        "或有掃描發現未完成分類（未分類一律視同 D，不視同已解決）。\n"
-        "- **第二級｜可交付，需揭露已知風險**：無上述情況，但存在 B 類已知風險。\n"
-        "- **第一級｜可直接交付**：掃描範圍內所有發現均確認為誤報，且無待處理之人工複核發現。\n"
         "- 未提供分類結果時不予評級，報告一律視為內部工作版本。\n"
     )
 
@@ -484,11 +481,11 @@ def render_pending_appendix(effective, manual, classification_provided):
         desc = item["description"].replace("\n", " ").replace("|", "/").strip()[:150]
         if item["category"] is None:
             desc = f"【未分類】{desc}"
-        lines.append(f"| {ident} | {item['check']} | {impact_zh(item['impact'])} | {loc} | {desc} |")
+        lines.append(f"| {ident} | {item['check']} | {item['impact']} | {loc} | {desc} |")
     for m in pending_manual:
         loc = f"{m.get('file', '?')}:{format_lines(m.get('lines'))}"
         desc = (m.get("description") or "").replace("\n", " ").replace("|", "/").strip()[:150]
-        lines.append(f"| {m.get('id')} | {m.get('title') or '人工複核發現'} | {severity_zh(m.get('severity'))} | {loc} | {desc} |")
+        lines.append(f"| {m.get('id')} | {m.get('title') or '人工複核發現'} | {m.get('severity')} | {loc} | {desc} |")
     return "\n".join(lines) + "\n"
 
 

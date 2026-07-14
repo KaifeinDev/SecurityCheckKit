@@ -52,6 +52,8 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 
 （帶 `--full-audit` 則連 `lib/` 底下相依套件的發現也一併保留，不過濾。）
 
+**重掃時（同一專案之前已做過 Step 2）加上 `--prev-classification <上次的 classification.json>`**：skeleton 會把「跟上次同一筆」的發現（check + file + 起始行號一致；行號位移時退而用 check + file 唯一比對）自動沿用上次的 category/dev_note 並標記 `carried_from_previous`，只有新出現的發現留空待分類；上次的 manual_findings 也會原樣帶入。CLI 會列出「上次有、這次沒有」的已解決清單。
+
 這個指令會自動：跑 `slither . --json`、過濾出專案自己的發現（`is_own_finding`，依 `source_mapping.filename_relative` 是否落在 `--src-prefix` 底下判斷）、蒐集掃描環境資訊寫成 `scan_env.json`，並在終端機印出摘要表（check / impact / 檔案:行號 / 描述）。寫入 `--out-dir`：
 
 - `results_raw.json` — 未過濾的原始 `slither --json` 輸出
@@ -90,7 +92,9 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 }
 ```
 
-**人工複核發現（manual_findings）**：分類時必然會讀合約原始碼 —— 這正是發現「工具抓不到的問題」（壞掉的權限檢查、該保護而沒保護的函式、缺滑點保護等業務邏輯問題）的最好時機。看到任何 Slither 沒報的問題，寫進 `manual_findings[]`，一樣列給使用者確認：
+**情境式邏輯掃描（GPT-Scan 式，必做）**：Slither 抓不到業務邏輯層級的漏洞，這一段就是補這個缺口的。分類過程中，對掃描範圍內的**每一份合約**跑完 `references/logic_scan.md` 的十條情境（L1～L10：權限檢查實作錯誤、未保護的狀態變更、旗標未落實、缺滑點保護、可操縱價格源、首存者操縱、可搶跑初始化、未授權轉帳、記帳順序、權重複用），採兩段式判定：先比對合約是否具備該情境的前置條件，有才逐行讀關鍵語句確認。命中的候選寫進 `manual_findings[]` 並在 `scenario` 欄位標注情境編號；**信心不足填 D，不硬判**。
+
+**人工複核發現（manual_findings）**：除了上述情境庫，讀碼過程看到任何 Slither 沒報的問題（不限於十條情境）也寫進 `manual_findings[]`，一樣列給使用者確認：
 
 ```json
 {
@@ -101,13 +105,16 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
   "lines": [32, 35],
   "description": "<問題說明與影響>",
   "category": "A|B|D",
-  "dev_note": "<判斷依據；人工發現不存在 C 誤報，確認不是問題就直接移除>"
+  "scenario": "<可選：命中 references/logic_scan.md 的情境編號，如 L3>",
+  "dev_note": "<判斷依據，必須引用關鍵語句位置（檔案:行號）；人工發現不存在 C 誤報，確認不是問題就直接移除>"
 }
 ```
 
 人工發現會進報告的「人工複核發現」章節並參與資安等級計算（Critical/High 直接判第四級）。**特別留意**：凡是分類理由想寫「僅 owner/admin 可呼叫所以可接受」，必須先實際檢查該 modifier / require 的實作邏輯是不是真的有效，並把檢查結果寫進 dev_note —— 權限檢查本身壞掉是 Slither 抓不到的典型漏報。
 
 掃描結果裡的**每一筆**發現都要分類：Step 4 會把 classification.json 跟掃描結果逐筆核對，漏掉的一律視同 D（待確認），未分類的 High 直接把等級打成第四級。
+
+**重掃沿用（`--prev-classification`）的複核義務**：skeleton 裡標 `carried_from_previous: "exact"` 的項目可視為已分類，但列給使用者時要註明是沿用；標 `"fallback"` 的（行號位移、用 check+file 對上的）必須逐筆重讀確認沒對錯行；帶入的 manual_findings（標 `"manual"`）不隨掃描結果失效，要逐筆重新確認仍然成立，已修復的直接刪除。
 
 把 A/B/C/D 四類清單與 manual_findings 列給使用者看（含每筆的具體理由），**明確等待使用者確認**（例如回覆「確認」或「ok」）才能進入 Step 3。使用者若要求把某筆從一類移到另一類，更新 `classification.json` 後重新給使用者看一次。
 
@@ -156,7 +163,7 @@ python3 -m pip install --user --break-system-packages fpdf2 matplotlib
 
 `cli.py report` 會自動探測「哪個 python 真的裝了 fpdf2/matplotlib」，就算目前在 slither 的 venv 底下執行也能找到系統 python；找不到時會清楚報錯並提示設定 `SECURITY_SCAN_REPORT_PYTHON` 環境變數指向正確的 python。
 
-`md_to_pdf.py` 會自動找系統上的 CJK 字型；如果找不到，會清楚報錯並提示設定 `SECURITY_SCAN_CJK_FONT` 環境變數指向一個涵蓋中文字的字型檔（`.ttc`/`.ttf`），也可以用 `cli.py report --font <path>` 直接傳入。
+`md_to_pdf.py` 會自動找系統上的 CJK 字型（含優先嘗試將可變字重字型切出 Regular/Bold 兩個靜態字重，快取於 `~/.cache/security-scan-kit/fonts/`，讓標題真正以粗體呈現而非只放大字級）；如果找不到，會清楚報錯並提示設定 `SECURITY_SCAN_CJK_FONT`（可選搭配 `SECURITY_SCAN_CJK_FONT_BOLD`）環境變數指向涵蓋中文字的字型檔（`.ttc`/`.ttf`），也可以用 `cli.py report --font <path> [--font-bold <path>]` 直接傳入。
 
 **`cli.py report` 的 exit code 就是交付閘門**（詳見 `references/severity_grading.md`）：
 

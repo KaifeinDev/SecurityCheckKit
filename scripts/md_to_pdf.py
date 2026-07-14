@@ -7,20 +7,30 @@ monospace, and keeping the backticks just reads as clutter), pipe tables,
 image references (![alt](path)), blockquotes (> text, rendered as a smaller
 plain paragraph), and plain paragraphs/bullets (nested bullets indented two
 spaces per level render with a matching visual indent and hanging wrap).
+Bold spans are rendered with fpdf2's own markdown=True (real bold face, not
+just a bigger size), and each finding-title bullet in the classification/
+manual-findings sections is colored by severity (see finding_title_color()).
 
 Usage:
-    python3 md_to_pdf.py <report.md> <report.pdf> [--font /path/to/font.ttc]
+    python3 md_to_pdf.py <report.md> <report.pdf> [--font /path/to/font.ttc] [--font-bold /path/to/bold.ttc]
 
 Font resolution order if --font is not given:
-    1. $SECURITY_SCAN_CJK_FONT env var
-    2. A handful of common Linux system paths
-    3. `fc-match` query result (if fontconfig is installed)
-    4. Common WSL-mounted Windows locations (e.g. bundled with some IDEs)
-If none are found, exits with a clear error explaining how to fix it.
+    1. $SECURITY_SCAN_CJK_FONT (+ optional $SECURITY_SCAN_CJK_FONT_BOLD) env vars
+    2. A variable-weight CJK font (e.g. a WSL-mounted Noto Sans TC), instanced
+       into static Regular/Bold weights on first use and cached under
+       ~/.cache/security-scan-kit/fonts/ — this is what gives real bold
+       headings instead of Regular reused under the "B" style
+    3. find_cjk_font()'s existing candidates (common Linux paths / fc-match /
+       WSL-mounted msyh.ttc), paired with a same-directory bold sibling
+       (e.g. msyhbd.ttc) if one exists, else falling back to regular-as-bold
+If none are found, exits with a clear error explaining how to fix it. None of
+this is required for other environments: a machine without the variable font
+just falls through to the same resolution this script always had.
 See references/pitfalls.md for why this is needed and for a known fpdf2
 cursor-position bug this script works around.
 """
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -40,6 +50,24 @@ CANDIDATE_FONT_PATHS = [
     "/mnt/c/Windows/Fonts/msyh.ttc",
     "/mnt/c/Program Files/Android/Android Studio/plugins/design-tools/resources/layoutlib/data/fonts/NotoSansCJK-Regular.ttc",
 ]
+
+# Variable-weight fonts tried before falling back to CANDIDATE_FONT_PATHS —
+# nicer for reading a formal report, and (being variable) let us bake out a
+# genuine Bold instance instead of faking it. Only tried if the path exists;
+# harmless on any machine that doesn't have it.
+VARIABLE_FONT_CANDIDATES = [
+    "/mnt/c/Windows/Fonts/NotoSansTC-VF.ttf",
+]
+
+# Known regular->bold sibling file pairs (same directory) for static (non-
+# variable) font candidates, so headings get a real bold face rather than
+# the regular glyphs stretched under the "B" style.
+BOLD_SIBLINGS = {
+    "msyh.ttc": "msyhbd.ttc",
+    "NotoSansCJK-Regular.ttc": "NotoSansCJK-Bold.ttc",
+}
+
+FONT_CACHE_DIR = os.path.expanduser("~/.cache/security-scan-kit/fonts")
 
 
 def find_cjk_font() -> str:
@@ -69,13 +97,97 @@ def find_cjk_font() -> str:
     )
 
 
+def _instance_static_weight(vf_path: str, wght: int) -> str:
+    """Bake a static-weight instance out of a variable font, cached by path+weight
+    so repeated report builds don't redo the instancing work."""
+    key = hashlib.sha1(f"{vf_path}:{wght}".encode()).hexdigest()[:16]
+    out_path = os.path.join(FONT_CACHE_DIR, f"{os.path.basename(vf_path)}.{wght}.{key}.ttf")
+    if os.path.isfile(out_path):
+        return out_path
+    from fontTools.ttLib import TTFont
+    from fontTools.varLib import instancer
+
+    font = TTFont(vf_path)
+    instancer.instantiateVariableFont(font, {"wght": wght}, inplace=True)
+    os.makedirs(FONT_CACHE_DIR, exist_ok=True)
+    font.save(out_path)
+    return out_path
+
+
+def _try_variable_font_pair(vf_path: str):
+    """Return (regular_path, bold_path) instanced from a variable font, or None
+    if the path doesn't exist or instancing fails for any reason (missing
+    fonttools support, corrupt font, ...) — callers fall back silently."""
+    if not os.path.isfile(vf_path):
+        return None
+    try:
+        return _instance_static_weight(vf_path, 400), _instance_static_weight(vf_path, 700)
+    except Exception:
+        return None
+
+
+def _find_bold_sibling(regular_path: str):
+    sibling = BOLD_SIBLINGS.get(os.path.basename(regular_path))
+    if not sibling:
+        return None
+    candidate = os.path.join(os.path.dirname(regular_path), sibling)
+    return candidate if os.path.isfile(candidate) else None
+
+
+def resolve_report_fonts():
+    """Resolve (regular_path, bold_path) for the report body font. See the
+    module docstring for the fallback order; every step degrades to the next
+    rather than raising, except the final find_cjk_font() call."""
+    env_regular = os.environ.get("SECURITY_SCAN_CJK_FONT")
+    if env_regular and os.path.isfile(env_regular):
+        env_bold = os.environ.get("SECURITY_SCAN_CJK_FONT_BOLD")
+        bold = env_bold if env_bold and os.path.isfile(env_bold) else (_find_bold_sibling(env_regular) or env_regular)
+        return env_regular, bold
+
+    for vf_path in VARIABLE_FONT_CANDIDATES:
+        pair = _try_variable_font_pair(vf_path)
+        if pair:
+            return pair
+
+    regular = find_cjk_font()
+    return regular, (_find_bold_sibling(regular) or regular)
+
+
 def strip_inline_markup(text: str) -> str:
     text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
     text = re.sub(r"`(.*?)`", r"\1", text)
     return text
 
 
-def build_pdf(md_path: str, pdf_path: str, font_path: str) -> None:
+def strip_code_markup(text: str) -> str:
+    """Drop inline-code backticks but keep **bold** markers intact — those are
+    rendered by fpdf2's own markdown=True, not manually stripped."""
+    return re.sub(r"`(.*?)`", r"\1", text)
+
+
+SEVERITY_RE = re.compile(r"嚴重度[：:]\s*([A-Za-z]+)")
+CATEGORY_HEADING_RE = re.compile(r"^([A-D])\.\s")
+
+COLOR_CRITICAL_HIGH = (183, 28, 28)
+COLOR_MEDIUM = (217, 119, 6)
+COLOR_MUTED = (128, 128, 128)
+COLOR_DEFAULT = (0, 0, 0)
+
+
+def finding_title_color(severity: str, is_false_positive: bool):
+    """Findings unrelated to exploitable security risk (false positives, or
+    Informational/Optimization impact) are muted gray regardless of their
+    raw impact value; otherwise color follows severity."""
+    if is_false_positive or severity in ("Informational", "Optimization"):
+        return COLOR_MUTED
+    if severity in ("Critical", "High"):
+        return COLOR_CRITICAL_HIGH
+    if severity == "Medium":
+        return COLOR_MEDIUM
+    return COLOR_DEFAULT
+
+
+def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str = None) -> None:
     md_dir = os.path.dirname(os.path.abspath(md_path))
     with open(md_path, encoding="utf-8") as f:
         raw_lines = f.read().splitlines()
@@ -86,20 +198,26 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str) -> None:
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.add_font("Body", "", font_path)
-    pdf.add_font("Body", "B", font_path)
+    pdf.add_font("Body", "B", bold_font_path or font_path)
     pdf.set_font("Body", "", 11)
 
-    def para(text, size=11, style="", gap=6):
+    def para(text, size=11, style="", gap=6, color=None):
         pdf.set_font("Body", style, size)
         # A table rendered just before this can leave the x cursor mid-page;
         # multi_cell() then has ~0 width left and throws. See pitfalls.md #5.
         pdf.set_x(pdf.l_margin)
+        if color:
+            pdf.set_text_color(*color)
         # fpdf2 defaults multi_cell() to JUSTIFY, which stretches gaps at the
         # few Latin-word space characters in otherwise-space-free CJK text
-        # into huge visible gaps. Left-align instead.
-        pdf.multi_cell(0, gap, text, align="L")
+        # into huge visible gaps. Left-align instead. markdown=True renders
+        # **bold** spans in the real bold face registered above instead of
+        # them being stripped to plain text.
+        pdf.multi_cell(0, gap, strip_code_markup(text), align="L", markdown=True)
+        if color:
+            pdf.set_text_color(*COLOR_DEFAULT)
 
-    def bullet(text, indent_mm=0, size=11, gap=6):
+    def bullet(text, indent_mm=0, size=11, gap=6, color=None):
         pdf.set_font("Body", "", size)
         # Draw the bullet marker in its own fixed cell and anchor the text in
         # a multi_cell right after it. A long space-free CJK sentence is one
@@ -109,8 +227,12 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str) -> None:
         # continue under the text (hanging indent) instead of under the
         # bullet.
         pdf.set_x(pdf.l_margin + indent_mm)
+        if color:
+            pdf.set_text_color(*color)
         pdf.cell(5, gap, "•")
-        pdf.multi_cell(0, gap, text, align="L")
+        pdf.multi_cell(0, gap, strip_code_markup(text), align="L", markdown=True)
+        if color:
+            pdf.set_text_color(*COLOR_DEFAULT)
 
     table_rows: list[str] = []
     in_table = False
@@ -154,6 +276,13 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str) -> None:
         pdf.ln(4)
         pdf.set_x(pdf.l_margin)
 
+    # Tracks which A/B/C/D classification section (§7) or manual-findings
+    # section (§6) we're currently inside, so finding-title bullets can be
+    # colored gray when they're category C (false positive) even though
+    # their raw Slither impact might be High. Reset on every "## " (new major
+    # section) and updated on every "### " category sub-heading.
+    current_category = None
+
     for line in lines:
         stripped = line.strip()
 
@@ -180,10 +309,15 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str) -> None:
         elif stripped.startswith("#### "):
             para(stripped[5:], size=12, style="B", gap=7)
         elif stripped.startswith("### "):
-            para(stripped[4:], size=13, style="B", gap=8)
+            heading_text = stripped[4:]
+            m = CATEGORY_HEADING_RE.match(heading_text)
+            current_category = m.group(1) if m else None
+            para(heading_text, size=13, style="B", gap=8)
         elif stripped.startswith("## "):
+            current_category = None
             para(stripped[3:], size=15, style="B", gap=9)
         elif stripped.startswith("# "):
+            current_category = None
             para(stripped[2:], size=18, style="B", gap=10)
         elif stripped == "---":
             pdf.ln(2)
@@ -191,7 +325,7 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str) -> None:
             pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
             pdf.ln(4)
         elif stripped.startswith(">"):
-            clean = strip_inline_markup(stripped.lstrip(">").strip())
+            clean = stripped.lstrip(">").strip()
             if clean:
                 para(clean, size=10)
             else:
@@ -200,13 +334,17 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str) -> None:
             # Nested list items (2 spaces per level in the markdown) get a
             # matching visual indent.
             depth = (len(line) - len(line.lstrip(" "))) // 2
-            clean = strip_inline_markup(stripped[2:])
-            bullet(clean, indent_mm=depth * 5)
-        elif stripped.startswith("**") and stripped.endswith("**") and len(stripped) > 4:
-            para(strip_inline_markup(stripped.strip("*")), size=11, style="B")
+            content = stripped[2:]
+            color = None
+            if depth == 0:
+                # Only top-level bullets are finding titles (§6/§7); nested
+                # sub-items (原始描述/工程註記 etc.) stay uncolored.
+                sev_match = SEVERITY_RE.search(content)
+                if sev_match:
+                    color = finding_title_color(sev_match.group(1), current_category == "C")
+            bullet(content, indent_mm=depth * 5, color=color)
         else:
-            clean = strip_inline_markup(stripped)
-            para(clean, size=11)
+            para(stripped, size=11)
 
     if in_table:
         flush_table()
@@ -218,12 +356,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("md_path")
     parser.add_argument("pdf_path")
-    parser.add_argument("--font", help="Path to a CJK-capable .ttc/.ttf font")
+    parser.add_argument("--font", help="Path to a CJK-capable regular-weight .ttc/.ttf font")
+    parser.add_argument("--font-bold", help="Path to a CJK-capable bold-weight .ttc/.ttf font")
     args = parser.parse_args()
 
-    font_path = args.font or find_cjk_font()
-    build_pdf(args.md_path, args.pdf_path, font_path)
-    print(f"wrote {args.pdf_path} (font: {font_path})")
+    if args.font:
+        font_path = args.font
+        bold_font_path = args.font_bold or _find_bold_sibling(args.font) or args.font
+    else:
+        font_path, bold_font_path = resolve_report_fonts()
+    build_pdf(args.md_path, args.pdf_path, font_path, bold_font_path)
+    print(f"wrote {args.pdf_path} (font: {font_path}, bold: {bold_font_path})")
 
 
 if __name__ == "__main__":

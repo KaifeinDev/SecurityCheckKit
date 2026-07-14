@@ -42,15 +42,15 @@
 
 「工具原始輸出」為 Slither 掃描的未經處理結果；「交付版掃描結果」為對含抑制註解之交付版程式碼重新掃描的結果 —— **亦即甲方使用相同版本 Slither（見「掃描環境資訊」）對交付程式碼自行掃描時，可重現的數字**。兩者的差異全部來自經人工分類為 B（可接受風險）或 C（誤報）並加上抑制註解的項目，逐筆理由與註解位置見「完整分類明細」。
 
-嚴重程度沿用掃描工具的五個等級：高、中、低、資訊性、最佳化（依序對應工具輸出的 High / Medium / Low / Informational / Optimization，自行重掃時請以此對照）。
+嚴重程度沿用掃描工具原文的五個等級：High、Medium、Low、Informational、Optimization。
 
 | 嚴重程度 | 工具原始輸出 | 交付版掃描結果 | 差異 |
 |---|---|---|---|
-| 高 | 0 | 0 | +0 |
-| 中 | 0 | 0 | +0 |
-| 低 | 3 | 0 | -3 |
-| 資訊性 | 2 | 0 | -2 |
-| 最佳化 | 0 | 0 | +0 |
+| High | 0 | 0 | +0 |
+| Medium | 0 | 0 | +0 |
+| Low | 3 | 0 | -3 |
+| Informational | 2 | 0 | -2 |
+| Optimization | 0 | 0 | +0 |
 | **總計** | **5** | **0** | **-5** |
 
 ---
@@ -65,9 +65,9 @@
 
 以下項目由工程團隊在逐筆分類複核過程中以人工方式發現，**不在掃描工具的輸出之列**（多屬靜態分析無法偵測的邏輯層級問題，見「檢測方法與範圍限制」）。各筆開頭的「編號 M1、M2…」為人工複核發現之流水號：
 
-- **編號 M1｜deposit() 每次加碼會重置整筆餘額的鎖倉期**（嚴重度：低／分類 B）— src/TimelockVault.sol:38-43
+- **編號 M1｜deposit() 每次加碼會重置整筆餘額的鎖倉期**（嚴重度：Low／分類 B）— src/TimelockVault.sol:38-43
   - 說明：unlockAt[msg.sender] 在每次 deposit() 時整筆覆寫為 block.timestamp + LOCK_PERIOD（L41），代表使用者加碼 1 wei 就會把既有全部餘額重新鎖 7 天。若前端或第三方合約代使用者存入，可能造成非預期的延長鎖倉。
-  - 工程註記：與產品方確認過這是刻意設計（「任何異動重新起算定存期」），且已寫入使用者文件；技術上若要改為分批鎖倉需要 per-deposit 的紀錄結構，成本與收益不成比例。評估為可接受風險，於文件揭露。
+  - 備註（已加上抑制註解）：與產品方確認過這是刻意設計（「任何異動重新起算定存期」），且已寫入使用者文件；技術上若要改為分批鎖倉需要 per-deposit 的紀錄結構，成本與收益不成比例。評估為可接受風險，於文件揭露。
 
 ---
 
@@ -81,27 +81,27 @@
 
 ### B. 已知風險但可接受
 
-- **編號 3｜timestamp**（嚴重度：低）— src/TimelockVault.sol:46-57
+- **編號 3｜timestamp**（嚴重度：Low）— src/TimelockVault.sol:46-57
   - 原始描述：TimelockVault.withdraw() (src/TimelockVault.sol#46-57) uses timestamp for comparisons Dangerous comparisons: - require(bool,string)(block.timestamp >= unlockAt[msg.sender],still locked) (src/TimelockVault.sol#49)
-  - 工程註記：鎖倉判斷確實依賴 block.timestamp，出塊者可在共識容忍範圍內（秒級）微調時間戳，理論上能讓提款提早數秒解鎖。但 LOCK_PERIOD 為 7 天，秒級誤差對業務無實質影響，且合約內沒有以 timestamp 作為隨機性或計價來源的用法。評估為可接受風險，保留現狀。
+  - 備註（已加上抑制註解）：鎖倉判斷確實依賴 block.timestamp，出塊者可在共識容忍範圍內（秒級）微調時間戳，理論上能讓提款提早數秒解鎖。但 LOCK_PERIOD 為 7 天，秒級誤差對業務無實質影響，且合約內沒有以 timestamp 作為隨機性或計價來源的用法。評估為可接受風險，保留現狀。
 
 ### C. 可直接忽略（誤報）
 
-- **編號 1｜reentrancy-events**（嚴重度：低）— src/TimelockVault.sol:46-57
+- **編號 1｜reentrancy-events**（嚴重度：Low）— src/TimelockVault.sol:46-57
   - 原始描述：Reentrancy in TimelockVault.withdraw() (src/TimelockVault.sol#46-57): External calls: - (ok,None) = msg.sender.call{value: payout}() (src/TimelockVault.sol#54) Event emitted after the call(s): - Withdrawn(msg.sender,payout,fee) (src/TimelockVault.sol#56)
-  - 工程註記：withdraw() 遵循 checks-effects-interactions：balances[msg.sender] 與 accruedFees 皆在外部呼叫前完成更新（L51-53），重入時餘額已歸零、require(amount > 0) 會擋下。工具指出的只是 Withdrawn 事件在外部呼叫之後才發出，僅影響鏈下索引器看到的事件順序，無資金風險。
+  - 備註（已加上抑制註解）：withdraw() 遵循 checks-effects-interactions：balances[msg.sender] 與 accruedFees 皆在外部呼叫前完成更新（L51-53），重入時餘額已歸零、require(amount > 0) 會擋下。工具指出的只是 Withdrawn 事件在外部呼叫之後才發出，僅影響鏈下索引器看到的事件順序，無資金風險。
 
-- **編號 2｜reentrancy-events**（嚴重度：低）— src/TimelockVault.sol:66-74
+- **編號 2｜reentrancy-events**（嚴重度：Low）— src/TimelockVault.sol:66-74
   - 原始描述：Reentrancy in TimelockVault.sweepFees(address) (src/TimelockVault.sol#66-74): External calls: - (ok,None) = to.call{value: amount}() (src/TimelockVault.sol#71) Event emitted after the call(s): - FeesSwept(to,amount) (src/TimelockVault.sol#73)
-  - 工程註記：sweepFees() 同樣先把 accruedFees 歸零（L70）才做外部呼叫，且有 onlyOwner 保護（已檢查 modifier 實作：require(msg.sender == owner)，owner 為 immutable、建構時設定，邏輯有效）。工具指出的僅是 FeesSwept 事件順序問題，無資金風險。
+  - 備註（已加上抑制註解）：sweepFees() 同樣先把 accruedFees 歸零（L70）才做外部呼叫，且有 onlyOwner 保護（已檢查 modifier 實作：require(msg.sender == owner)，owner 為 immutable、建構時設定，邏輯有效）。工具指出的僅是 FeesSwept 事件順序問題，無資金風險。
 
-- **編號 4｜low-level-calls**（嚴重度：資訊性）— src/TimelockVault.sol:46-57
+- **編號 4｜low-level-calls**（嚴重度：Informational）— src/TimelockVault.sol:46-57
   - 原始描述：Low level call in TimelockVault.withdraw() (src/TimelockVault.sol#46-57): - (ok,None) = msg.sender.call{value: payout}() (src/TimelockVault.sol#54)
-  - 工程註記：刻意選用 call{value:} 而非 transfer/send：後兩者的 2300 gas 上限在收款方是合約（多簽、智能錢包）時會失敗，call 是 Istanbul 之後的建議寫法。回傳值有 require(ok) 檢查，非未檢查的低階呼叫。
+  - 備註（已加上抑制註解）：刻意選用 call{value:} 而非 transfer/send：後兩者的 2300 gas 上限在收款方是合約（多簽、智能錢包）時會失敗，call 是 Istanbul 之後的建議寫法。回傳值有 require(ok) 檢查，非未檢查的低階呼叫。
 
-- **編號 5｜low-level-calls**（嚴重度：資訊性）— src/TimelockVault.sol:66-74
+- **編號 5｜low-level-calls**（嚴重度：Informational）— src/TimelockVault.sol:66-74
   - 原始描述：Low level call in TimelockVault.sweepFees(address) (src/TimelockVault.sol#66-74): - (ok,None) = to.call{value: amount}() (src/TimelockVault.sol#71)
-  - 工程註記：同 #4：call{value:} 為建議寫法（國庫地址可能是多簽合約），回傳值有 require(ok) 檢查。
+  - 備註（已加上抑制註解）：同 #4：call{value:} 為建議寫法（國庫地址可能是多簽合約），回傳值有 require(ok) 檢查。
 
 ### D. 待人工確認
 
@@ -127,11 +127,11 @@
 - **D｜待人工確認**：尚無法判定歸屬者一律列此類，不得抑制；判讀信心不足時寧列 D，不猜測分類。
 - **人工複核發現**：掃描工具輸出之外、由人工閱讀原始碼發現的問題，僅得分類 A／B／D；經確認非問題者直接自清單移除，不設誤報分類。
 
-**整案資安等級（由上而下逐條檢查，符合即定級）**
+**整案資安等級（以下由第一級至第四級列出定義；實際評定則由高至低逐條檢查，符合任一條件即定為該級）**
 
-- **第四級｜不通過**：存在任一「高」嚴重度且非誤報的掃描發現，或任一「危急／高」的人工複核發現。高嚴重度項目不得以「可接受風險」定級 —— 只能修復，或確認為誤報。
-- **第三級｜待確認，不建議交付**：無上述情況，但存在任何 A（已確認未修復）或 D（待確認）項目，或有掃描發現未完成分類（未分類一律視同 D，不視同已解決）。
-- **第二級｜可交付，需揭露已知風險**：無上述情況，但存在 B 類已知風險。
 - **第一級｜可直接交付**：掃描範圍內所有發現均確認為誤報，且無待處理之人工複核發現。
+- **第二級｜可交付，需揭露已知風險**：無下列第三、四級情況，但存在 B 類已知風險。
+- **第三級｜待確認，不建議交付**：無下列第四級情況，但存在任何 A（已確認未修復）或 D（待確認）項目，或有掃描發現未完成分類（未分類一律視同 D，不視同已解決）。
+- **第四級｜不通過**：存在任一「高」嚴重度且非誤報的掃描發現，或任一「危急／高」的人工複核發現。高嚴重度項目不得以「可接受風險」定級 —— 只能修復，或確認為誤報。
 - 未提供分類結果時不予評級，報告一律視為內部工作版本。
 

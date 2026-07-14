@@ -63,6 +63,7 @@ def main() -> None:
     parser.add_argument("--env")
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--font", help="Passed through to md_to_pdf.py")
+    parser.add_argument("--font-bold", help="Passed through to md_to_pdf.py")
     parser.add_argument("--skip-pdf", action="store_true", help="Only produce report.md, skip PDF conversion")
     args = parser.parse_args()
 
@@ -92,6 +93,8 @@ def main() -> None:
     pdf_cmd = [py, os.path.join(SCRIPTS_DIR, "md_to_pdf.py"), md_path, pdf_path]
     if args.font:
         pdf_cmd += ["--font", args.font]
+    if args.font_bold:
+        pdf_cmd += ["--font-bold", args.font_bold]
     subprocess.run(pdf_cmd, check=True)
     raise SystemExit(gate_code)
 
