@@ -1,0 +1,70 @@
+{
+  "findings": [
+    {
+      "id": 1,
+      "check": "reentrancy-events",
+      "impact": "Low",
+      "file": "src/TimelockVault.sol",
+      "lines": [
+        46,
+        57
+      ],
+      "description": "Reentrancy in TimelockVault.withdraw() (src/TimelockVault.sol#46-57): External calls: - (ok,None) = msg.sender.call{value: payout}() (src/TimelockVault.sol#54) Event emitted after the call(s): - Withdrawn(msg.sender,payout,fee) (src/TimelockVault.sol#56)",
+      "category": "",
+      "dev_note": ""
+    },
+    {
+      "id": 2,
+      "check": "reentrancy-events",
+      "impact": "Low",
+      "file": "src/TimelockVault.sol",
+      "lines": [
+        66,
+        74
+      ],
+      "description": "Reentrancy in TimelockVault.sweepFees(address) (src/TimelockVault.sol#66-74): External calls: - (ok,None) = to.call{value: amount}() (src/TimelockVault.sol#71) Event emitted after the call(s): - FeesSwept(to,amount) (src/TimelockVault.sol#73)",
+      "category": "",
+      "dev_note": ""
+    },
+    {
+      "id": 3,
+      "check": "timestamp",
+      "impact": "Low",
+      "file": "src/TimelockVault.sol",
+      "lines": [
+        46,
+        57
+      ],
+      "description": "TimelockVault.withdraw() (src/TimelockVault.sol#46-57) uses timestamp for comparisons Dangerous comparisons: - require(bool,string)(block.timestamp >= unlockAt[msg.sender],still locked) (src/TimelockVault.sol#49)",
+      "category": "",
+      "dev_note": ""
+    },
+    {
+      "id": 4,
+      "check": "low-level-calls",
+      "impact": "Informational",
+      "file": "src/TimelockVault.sol",
+      "lines": [
+        46,
+        57
+      ],
+      "description": "Low level call in TimelockVault.withdraw() (src/TimelockVault.sol#46-57): - (ok,None) = msg.sender.call{value: payout}() (src/TimelockVault.sol#54)",
+      "category": "",
+      "dev_note": ""
+    },
+    {
+      "id": 5,
+      "check": "low-level-calls",
+      "impact": "Informational",
+      "file": "src/TimelockVault.sol",
+      "lines": [
+        66,
+        74
+      ],
+      "description": "Low level call in TimelockVault.sweepFees(address) (src/TimelockVault.sol#66-74): - (ok,None) = to.call{value: amount}() (src/TimelockVault.sol#71)",
+      "category": "",
+      "dev_note": ""
+    }
+  ],
+  "manual_findings": []
+}

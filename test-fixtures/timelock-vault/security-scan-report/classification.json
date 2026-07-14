@@ -1,0 +1,81 @@
+{
+  "findings": [
+    {
+      "id": 1,
+      "check": "reentrancy-events",
+      "impact": "Low",
+      "file": "src/TimelockVault.sol",
+      "lines": [
+        46,
+        57
+      ],
+      "description": "Reentrancy in TimelockVault.withdraw() (src/TimelockVault.sol#46-57): External calls: - (ok,None) = msg.sender.call{value: payout}() (src/TimelockVault.sol#54) Event emitted after the call(s): - Withdrawn(msg.sender,payout,fee) (src/TimelockVault.sol#56)",
+      "category": "C",
+      "dev_note": "withdraw() 遵循 checks-effects-interactions：balances[msg.sender] 與 accruedFees 皆在外部呼叫前完成更新（L51-53），重入時餘額已歸零、require(amount > 0) 會擋下。工具指出的只是 Withdrawn 事件在外部呼叫之後才發出，僅影響鏈下索引器看到的事件順序，無資金風險。"
+    },
+    {
+      "id": 2,
+      "check": "reentrancy-events",
+      "impact": "Low",
+      "file": "src/TimelockVault.sol",
+      "lines": [
+        66,
+        74
+      ],
+      "description": "Reentrancy in TimelockVault.sweepFees(address) (src/TimelockVault.sol#66-74): External calls: - (ok,None) = to.call{value: amount}() (src/TimelockVault.sol#71) Event emitted after the call(s): - FeesSwept(to,amount) (src/TimelockVault.sol#73)",
+      "category": "C",
+      "dev_note": "sweepFees() 同樣先把 accruedFees 歸零（L70）才做外部呼叫，且有 onlyOwner 保護（已檢查 modifier 實作：require(msg.sender == owner)，owner 為 immutable、建構時設定，邏輯有效）。工具指出的僅是 FeesSwept 事件順序問題，無資金風險。"
+    },
+    {
+      "id": 3,
+      "check": "timestamp",
+      "impact": "Low",
+      "file": "src/TimelockVault.sol",
+      "lines": [
+        46,
+        57
+      ],
+      "description": "TimelockVault.withdraw() (src/TimelockVault.sol#46-57) uses timestamp for comparisons Dangerous comparisons: - require(bool,string)(block.timestamp >= unlockAt[msg.sender],still locked) (src/TimelockVault.sol#49)",
+      "category": "B",
+      "dev_note": "鎖倉判斷確實依賴 block.timestamp，出塊者可在共識容忍範圍內（秒級）微調時間戳，理論上能讓提款提早數秒解鎖。但 LOCK_PERIOD 為 7 天，秒級誤差對業務無實質影響，且合約內沒有以 timestamp 作為隨機性或計價來源的用法。評估為可接受風險，保留現狀。"
+    },
+    {
+      "id": 4,
+      "check": "low-level-calls",
+      "impact": "Informational",
+      "file": "src/TimelockVault.sol",
+      "lines": [
+        46,
+        57
+      ],
+      "description": "Low level call in TimelockVault.withdraw() (src/TimelockVault.sol#46-57): - (ok,None) = msg.sender.call{value: payout}() (src/TimelockVault.sol#54)",
+      "category": "C",
+      "dev_note": "刻意選用 call{value:} 而非 transfer/send：後兩者的 2300 gas 上限在收款方是合約（多簽、智能錢包）時會失敗，call 是 Istanbul 之後的建議寫法。回傳值有 require(ok) 檢查，非未檢查的低階呼叫。"
+    },
+    {
+      "id": 5,
+      "check": "low-level-calls",
+      "impact": "Informational",
+      "file": "src/TimelockVault.sol",
+      "lines": [
+        66,
+        74
+      ],
+      "description": "Low level call in TimelockVault.sweepFees(address) (src/TimelockVault.sol#66-74): - (ok,None) = to.call{value: amount}() (src/TimelockVault.sol#71)",
+      "category": "C",
+      "dev_note": "同 #4：call{value:} 為建議寫法（國庫地址可能是多簽合約），回傳值有 require(ok) 檢查。"
+    }
+  ],
+  "manual_findings": [
+    {
+      "id": "M1",
+      "title": "deposit() 每次加碼會重置整筆餘額的鎖倉期",
+      "severity": "Low",
+      "file": "src/TimelockVault.sol",
+      "lines": [38, 43],
+      "description": "unlockAt[msg.sender] 在每次 deposit() 時整筆覆寫為 block.timestamp + LOCK_PERIOD（L41），代表使用者加碼 1 wei 就會把既有全部餘額重新鎖 7 天。若前端或第三方合約代使用者存入，可能造成非預期的延長鎖倉。",
+      "category": "B",
+      "dev_note": "與產品方確認過這是刻意設計（「任何異動重新起算定存期」），且已寫入使用者文件；技術上若要改為分批鎖倉需要 per-deposit 的紀錄結構，成本與收益不成比例。評估為可接受風險，於文件揭露。"
+    }
+  ]
+}
