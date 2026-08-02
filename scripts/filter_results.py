@@ -7,9 +7,32 @@ Usage:
 
 `--src-prefix` may be repeated to allow multiple project source roots.
 Matching is done against each element's source_mapping.filename_relative.
+Detectors with an empty `elements` list (observed: unindexed-event-address)
+fall back to parsing the file path out of the description text — see
+_fallback_location().
 """
 import argparse
 import json
+import re
+
+# Some Slither detectors (observed: unindexed-event-address) report an empty
+# `elements` list — there is no source_mapping anywhere in the finding. The
+# only location signal left is embedded in the description/markdown text as
+# `(path/File.sol#123)` or `(path/File.sol#123-145)`. Without this fallback,
+# is_own_finding() silently treats every such finding as third-party noise —
+# including ones about the project's own contracts — because the loop over
+# `elements` never executes.
+_FALLBACK_FILE_LINE_RE = re.compile(r"\(([\w./-]+\.sol)#(\d+)(?:-(\d+))?\)")
+
+
+def _fallback_location(description: str) -> tuple[str, list[int]]:
+    m = _FALLBACK_FILE_LINE_RE.search(description or "")
+    if not m:
+        return "?", []
+    file = m.group(1)
+    start = int(m.group(2))
+    end = int(m.group(3)) if m.group(3) else start
+    return file, list(range(start, end + 1))
 
 
 def extract_findings(results_json: dict | None) -> list[dict]:
@@ -30,6 +53,8 @@ def extract_findings(results_json: dict | None) -> list[dict]:
                 file = sm["filename_relative"]
                 lines = sm.get("lines") or []
                 break
+        if file == "?":
+            file, lines = _fallback_location(d.get("description") or "")
         findings.append({
             "check": d.get("check", "?"),
             "impact": d.get("impact", "Informational"),
@@ -44,10 +69,15 @@ def extract_findings(results_json: dict | None) -> list[dict]:
 
 
 def is_own_finding(detector: dict, src_prefixes: list[str]) -> bool:
-    for element in detector.get("elements", []):
+    elements = detector.get("elements", [])
+    for element in elements:
         rel = (element.get("source_mapping", {}) or {}).get("filename_relative") or ""
         if any(rel.startswith(prefix) for prefix in src_prefixes):
             return True
+    if not elements:
+        file, _ = _fallback_location(detector.get("description") or "")
+        if file != "?":
+            return any(file.startswith(prefix) for prefix in src_prefixes)
     return False
 
 

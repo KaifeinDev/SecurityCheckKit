@@ -147,6 +147,39 @@ def reconcile(scan_list, classification):
     return effective, errors
 
 
+DUPLICATE_DEV_NOTE_THRESHOLD = 5
+
+
+def detect_duplicate_dev_notes(effective):
+    """Group B/C findings that share the exact same dev_note text across at
+    least DUPLICATE_DEV_NOTE_THRESHOLD entries.
+
+    This does NOT mean the classification is wrong — a genuinely-shared root
+    cause across many findings of the same check (e.g. "these N calls-loop
+    findings all originate from the same four role-gated batch functions") is
+    a legitimate reason to reuse one verified dev_note. But a human reviewer
+    reading only a rolled-up "B: 59 筆" count in a summary table has no way to
+    notice that 30 of those 59 share one paragraph, and no way to tell
+    "verified once, correctly applies to all 30" apart from "written once,
+    never re-checked against the other 29." Both look identical in the data.
+    This function does not — and cannot — resolve that ambiguity; it only
+    makes the duplication impossible to miss, forcing an explicit human
+    judgment call instead of a silent one. See references/pitfalls.md for the
+    incident (an initial classification pass reused one plausible-sounding
+    but factually wrong justification across 27 findings without reading
+    their actual call sites) that motivated this check.
+    """
+    groups = {}
+    for f in effective:
+        if f["category"] not in ("B", "C"):
+            continue
+        note = (f.get("dev_note") or "").strip()
+        if not note:
+            continue
+        groups.setdefault(note, []).append(f)
+    return [items for items in groups.values() if len(items) >= DUPLICATE_DEV_NOTE_THRESHOLD]
+
+
 def validate_manual_findings(classification):
     """Validate classification.json's manual_findings[] (human-review findings
     that no Slither detector produced). Returns (manual_list, errors)."""
@@ -394,6 +427,22 @@ def render_manual_findings(manual, classification_provided):
     return "\n".join(lines)
 
 
+def render_duplicate_dev_note_warning(dup_groups):
+    if not dup_groups:
+        return "本次分類無單一理由套用於 5 筆以上發現的情況。\n"
+    lines = [
+        "以下每組發現皆共用**完全相同**的 dev_note 文字。共用本身不代表分類錯誤——同一根因造成的"
+        "大量同類發現，合理的作法就是驗證一次、套用到全部——但這也是「模板化理由未逐筆查證」最容易"
+        "藏身的地方。**請針對每一組，抽查至少一筆是否真的核對過該筆自己的檔案位置，而非直接沿用**：\n",
+    ]
+    for items in dup_groups:
+        checks = sorted({f["check"] for f in items})
+        ids = [f"編號{f['id']}" if f["id"] is not None else "未編號" for f in items]
+        lines.append(f"- **{len(items)} 筆共用同一段理由**（detector：{', '.join(checks)}）：{', '.join(ids)}")
+        lines.append(f"  - 理由全文：{items[0]['dev_note']}")
+    return "\n".join(lines) + "\n"
+
+
 def render_classification_detail(effective, classification_provided):
     if not classification_provided:
         return "_未提供分類資料（Step 2 未寫入 classification.json）。_\n"
@@ -520,6 +569,17 @@ def main() -> None:
             print(f"  - {e}", file=sys.stderr)
         sys.exit(2)
 
+    dup_groups = detect_duplicate_dev_notes(effective)
+    if dup_groups:
+        # Non-blocking — this is a nudge for human re-review, not a hard
+        # validation failure. See detect_duplicate_dev_notes() for why it
+        # can't safely be an error.
+        print(
+            f"提醒：{len(dup_groups)} 組發現共用同一段 dev_note（達 {DUPLICATE_DEV_NOTE_THRESHOLD} 筆以上門檻），"
+            "已收錄進報告「複核提醒」章節，建議抽查後再交付。",
+            file=sys.stderr,
+        )
+
     before_counts = severity_counts(before)
     after_counts = severity_counts(after)
     before_after_identical = before is not None and after is not None and before == after
@@ -569,7 +629,12 @@ def main() -> None:
 {render_manual_findings(manual, classification is not None)}
 ---
 
-## 7. 完整分類明細
+## 7. 複核提醒：重複使用的判斷理由
+
+{render_duplicate_dev_note_warning(dup_groups)}
+---
+
+## 8. 完整分類明細
 
 {render_classification_detail(effective, classification is not None)}
 ---

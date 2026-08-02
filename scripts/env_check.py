@@ -26,8 +26,19 @@ import subprocess
 import sys
 
 # (marker regex, which OZ major version it indicates)
+#
+# NOTE: `__UUPSUpgradeable_init()` is deliberately NOT in this list, even
+# though earlier versions of this script treated it as v4-only. Verified
+# against an actually-installed OpenZeppelin Contracts Upgradeable 5.4.0:
+# `UUPSUpgradeable.sol` still defines `__UUPSUpgradeable_init()` /
+# `__UUPSUpgradeable_init_unchained()` as no-op stubs kept for
+# backward-compatible initializer chains, even though v5's UUPSUpgradeable
+# has no storage left to initialize. Calling it is legal in both v4 and v5 —
+# it is not diagnostic, and treating it as v4-only produces false
+# CONFLICTING verdicts against consistently-v5 contracts (observed: a
+# contract using `__UUPSUpgradeable_init()` alongside v5's `_update` ERC721
+# hook was wrongly flagged as mixing incompatible API versions).
 OZ_VERSION_SIGNATURES = [
-    (re.compile(r"__UUPSUpgradeable_init\s*\("), "v4"),
     (re.compile(r"_beforeTokenTransfer\s*\("), "v4"),
     (re.compile(r"__Ownable_init\s*\(\s*\)"), "v4"),  # no-arg form
     (re.compile(r"__Ownable_init\s*\(\s*\w"), "v5"),  # takes initialOwner
@@ -106,17 +117,28 @@ def gather_dependency_versions(project_dir):
         if not os.path.isdir(path):
             continue
         version = None
-        ok, out = run(["git", "-C", path, "describe", "--tags", "--always"], project_dir)
-        if ok and out:
-            version = out.strip().splitlines()[-1]
-        else:
-            pkg_json = os.path.join(path, "package.json")
-            if os.path.isfile(pkg_json):
-                try:
-                    with open(pkg_json, encoding="utf-8") as f:
-                        version = json.load(f).get("version")
-                except (json.JSONDecodeError, OSError):
-                    pass
+        # Prefer package.json's semver when present — unambiguous and matches
+        # what the upstream project actually publishes as "the version".
+        pkg_json = os.path.join(path, "package.json")
+        if os.path.isfile(pkg_json):
+            try:
+                with open(pkg_json, encoding="utf-8") as f:
+                    version = json.load(f).get("version")
+            except (json.JSONDecodeError, OSError):
+                pass
+        # Fall back to `git describe`, but only if `path` is genuinely its
+        # own git checkout (has its own .git). If lib/ deps are plain
+        # directories (not git submodules) — the common case for
+        # `forge install` without --no-git, or a monorepo that vendors
+        # lib/ directly — `git -C path` silently walks up to the OUTER
+        # project's .git and describes THAT repo's HEAD instead of
+        # failing. This looks like a valid version but is the wrong
+        # repository entirely (observed: reported the parent project's own
+        # commit hash as the dependency's "version").
+        if not version and os.path.exists(os.path.join(path, ".git")):
+            ok, out = run(["git", "-C", path, "describe", "--tags", "--always"], project_dir)
+            if ok and out:
+                version = out.strip().splitlines()[-1]
         deps.append({"name": name, "version": version or "unknown"})
     return deps
 
@@ -129,7 +151,15 @@ def gather_scan_env(project_dir):
         solc_version = m.group(1)
 
     _, slither_out = run(["slither", "--version"], project_dir)
-    slither_version = slither_out.strip().splitlines()[-1] if slither_out else "unknown"
+    # `slither --version` prints a bare semver to stdout, but combined
+    # stdout+stderr (see run()) can trail with unrelated warnings (observed:
+    # a urllib3 deprecation warning on stderr), so "last line" is not
+    # reliable — pick the line that actually looks like a semver instead.
+    slither_version = "unknown"
+    for line in slither_out.splitlines():
+        if re.fullmatch(r"\d+\.\d+\.\d+", line.strip()):
+            slither_version = line.strip()
+            break
 
     _, forge_out = run(["forge", "--version"], project_dir)
     forge_version = "unknown"
@@ -184,20 +214,33 @@ def main() -> None:
     else:
         print("[forge build] skipped (fix foundry.toml first)")
 
+    # Surface the actually-installed OZ package version(s) first — this is
+    # ground truth when available (read from lib/*/package.json) and should
+    # be trusted over the code-signature heuristic below, which only infers
+    # what version the CONTRACT AUTHORS assumed, not what's installed.
+    oz_deps = [
+        d for d in result["env"]["dependencies"]
+        if "openzeppelin" in d["name"].lower()
+    ]
+    if oz_deps:
+        for d in oz_deps:
+            print(f"[oz-version] installed {d['name']} = {d['version']} (from package.json/git, authoritative)")
+
     conflicts = result["oz_version_signatures"]["conflicts"]
     if conflicts:
         needs_human = True
-        print("[oz-version] CONFLICTING API signatures found — pick a version manually, do not guess:")
+        print("[oz-version] CONFLICTING API signatures found in contract code — cross-check against the")
+        print("  installed version above before concluding this is a real mixed-version bug:")
         for f, versions in conflicts.items():
             print(f"  - {f}: signatures matching {versions}")
     else:
         per_file = result["oz_version_signatures"]["per_file"]
         if per_file:
-            print("[oz-version] consistent signatures detected:")
+            print("[oz-version] consistent signatures detected in contract code:")
             for f, versions in per_file.items():
                 print(f"  - {f}: {versions}")
         else:
-            print("[oz-version] no version-specific signatures detected")
+            print("[oz-version] no version-specific signatures detected in contract code")
 
     env = result["env"]
     print(f"[versions] solc={env['solc_version']} slither={env['slither_version']} forge={env['forge_version']}")
