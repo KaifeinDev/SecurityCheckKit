@@ -318,7 +318,48 @@ def render_internal_banner(grade_info):
     )
 
 
-def render_executive_summary(grade_info, before_counts, after_counts, manual, before_after_identical):
+def render_triage_summary(effective):
+    """A/B/C/D breakdown of the scan's own findings, independent of severity.
+
+    Placed ahead of the severity table deliberately: a reader deciding
+    whether to trust this report cares first about "how much of what the
+    tool flagged was actually real" (audit quality/signal-to-noise), not
+    "how many Highs are left" (remediation priority — that's a different
+    question, answered by the severity table right after this one).
+    """
+    counts = {"A": 0, "B": 0, "C": 0, "D_or_unclassified": 0}
+    for f in effective:
+        cat = f["category"]
+        if cat == "A":
+            counts["A"] += 1
+        elif cat == "B":
+            counts["B"] += 1
+        elif cat == "C":
+            counts["C"] += 1
+        else:  # "D" or None (unclassified) — both mean "not yet resolved"
+            counts["D_or_unclassified"] += 1
+    total = len(effective)
+    if total == 0:
+        return ""
+    pct = lambda n: f"{n / total * 100:.0f}%"
+    lines = [
+        f"| 分類 | 筆數 | 佔比 | 意思 |",
+        f"|---|---|---|---|",
+        f"| 真漏洞（A） | {counts['A']} | {pct(counts['A'])} | 逐筆確認，程式碼需要修改 |",
+        f"| 可接受風險（B） | {counts['B']} | {pct(counts['B'])} | 工具描述的行為真實存在，經確認在此情境下不構成安全問題 |",
+        f"| 誤報（C） | {counts['C']} | {pct(counts['C'])} | 工具的判斷邏輯本身不適用 |",
+    ]
+    if counts["D_or_unclassified"]:
+        lines.append(
+            f"| 待確認／未分類 | {counts['D_or_unclassified']} | {pct(counts['D_or_unclassified'])} | "
+            "尚未有足夠把握判斷，依規則計入判級時視同 D |"
+        )
+    return (
+        f"掃描工具本身找到 **{total}** 筆，經逐筆分類複核：\n\n" + "\n".join(lines) + "\n"
+    )
+
+
+def render_executive_summary(grade_info, before_counts, after_counts, manual, before_after_identical, effective):
     if grade_info["tier"] is None:
         return f"_{grade_info['reason']}_\n"
     total_before = sum(before_counts.values())
@@ -335,6 +376,7 @@ def render_executive_summary(grade_info, before_counts, after_counts, manual, be
         f"**本案資安等級：{grade_info['label']}**"
         "（各等級之定義與判定條件見「附錄二：發現分類與資安等級評定標準」）\n\n"
         f"{grade_info['reason']}\n\n"
+        f"{render_triage_summary(effective)}\n"
         f"掃描工具原始輸出共 {total_before} 項；交付版掃描結果為 {total_after} 項"
         "（此為甲方以相同工具版本重新掃描交付程式碼時可重現的數字，兩者差異之逐筆理由見「完整分類明細」）。"
         f"{manual_note}\n"
@@ -600,7 +642,7 @@ def main() -> None:
 
 {render_internal_banner(grade_info)}## 1. 摘要結論
 
-{render_executive_summary(grade_info, before_counts, after_counts, manual, before_after_identical)}
+{render_executive_summary(grade_info, before_counts, after_counts, manual, before_after_identical, effective)}
 ---
 
 ## 2. 檢測方法與範圍限制
