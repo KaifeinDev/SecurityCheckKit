@@ -49,8 +49,18 @@ VALID_CATEGORIES = {"A", "B", "C", "D"}
 SUPPRESSIBLE_CATEGORIES = {"B", "C"}
 
 
-def dev_note_label(category):
-    return "備註（已加上抑制註解）" if category in SUPPRESSIBLE_CATEGORIES else "備註"
+def dev_note_label(category, actually_suppressed):
+    """`category in SUPPRESSIBLE_CATEGORIES` only means B/C is ELIGIBLE for a
+    suppression comment — it says nothing about whether one was actually
+    added. Conflating the two previously made every B/C item claim "已加上
+    抑制註解" regardless of whether Step 3 had even run, which is a false
+    statement whenever before==after (Step 3 not executed) or during partial
+    Step 3 execution (only some B/C items covered so far). `actually_suppressed`
+    must be independently verified — see render_classification_detail — by
+    checking whether the finding is actually absent from the --after scan."""
+    if category in SUPPRESSIBLE_CATEGORIES and actually_suppressed:
+        return "備註（已加上抑制註解）"
+    return "備註"
 # Manual findings are human-judged, so "Critical" is allowed even though
 # Slither's own scale tops out at High. For grading, Critical >= High.
 MANUAL_SEVERITIES = {"Critical", "High", "Medium", "Low", "Informational"}
@@ -464,7 +474,11 @@ def render_manual_findings(manual, classification_provided):
             lines.append(f"  - 說明：{desc}")
         note = m.get("dev_note")
         if note:
-            lines.append(f"  - {dev_note_label(m.get('category'))}：{note}")
+            # Manual findings have no Slither `check` name to target with a
+            # `slither-disable` comment — the suppression-comment mechanism
+            # is Slither-specific and never applies here, regardless of
+            # category, so this always renders the plain label.
+            lines.append(f"  - {dev_note_label(m.get('category'), actually_suppressed=False)}：{note}")
         lines.append("")
     return "\n".join(lines)
 
@@ -485,11 +499,16 @@ def render_duplicate_dev_note_warning(dup_groups):
     return "\n".join(lines) + "\n"
 
 
-def render_classification_detail(effective, classification_provided):
+def render_classification_detail(effective, classification_provided, after_list):
     if not classification_provided:
         return "_未提供分類資料（Step 2 未寫入 classification.json）。_\n"
     if not effective:
         return "本次掃描沒有需要分類的發現。\n"
+
+    # A finding only genuinely has a suppression comment applied if it no
+    # longer shows up in the --after scan. Category alone (B/C) only means
+    # "eligible", not "done" — see dev_note_label().
+    after_fingerprints = {fingerprint(f["check"], f["file"], f["lines"]) for f in after_list}
 
     label = {
         "A": "A. 已確認漏洞，需修復",
@@ -520,7 +539,9 @@ def render_classification_detail(effective, classification_provided):
             if desc:
                 lines.append(f"  - 原始描述：{desc}")
             if item.get("dev_note"):
-                lines.append(f"  - {dev_note_label(item['category'])}：{item['dev_note']}")
+                fp = fingerprint(item["check"], item["file"], item["lines"])
+                suppressed = fp not in after_fingerprints
+                lines.append(f"  - {dev_note_label(item['category'], suppressed)}：{item['dev_note']}")
             lines.append("")
     return "\n".join(lines)
 
@@ -595,6 +616,7 @@ def main() -> None:
     env = load_json(args.env)
 
     scan_list = extract_findings(before)
+    after_list = extract_findings(after)
 
     errors = []
     manual = []
@@ -678,7 +700,7 @@ def main() -> None:
 
 ## 8. 完整分類明細
 
-{render_classification_detail(effective, classification is not None)}
+{render_classification_detail(effective, classification is not None, after_list)}
 ---
 
 ## 附錄一：待人工確認清單
