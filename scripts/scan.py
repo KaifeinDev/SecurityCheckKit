@@ -34,7 +34,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from env_check import gather_scan_env  # noqa: E402
-from filter_results import extract_findings, is_own_finding  # noqa: E402
+from filter_results import extract_findings, is_own_finding, _fallback_location  # noqa: E402
 
 
 def build_classification_skeleton(before_json):
@@ -158,6 +158,15 @@ def print_summary(detectors):
             rel = sm.get("filename_relative", "?")
             lines = sm.get("lines", [])
             loc = f"{rel}:{lines[0]}" if lines else rel
+        else:
+            # Detectors with an empty `elements` list (observed:
+            # unindexed-event-address) have no source_mapping to read here —
+            # reuse the same description-text fallback filter_results.py uses,
+            # so the terminal summary doesn't print "?" for a location that's
+            # actually known and correctly populated in the skeleton/report.
+            file, lines = _fallback_location(d.get("description") or "")
+            if file != "?":
+                loc = f"{file}:{lines[0]}" if lines else file
         desc = (d.get("description") or "").replace("\n", " ").strip()
         print(f"{d.get('check', '?'):<28} {d.get('impact', '?'):<14} {loc:<40} {desc[:60]}")
 
