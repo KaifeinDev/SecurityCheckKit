@@ -167,11 +167,38 @@ def strip_code_markup(text: str) -> str:
 
 SEVERITY_RE = re.compile(r"嚴重度[：:]\s*([A-Za-z]+)")
 CATEGORY_HEADING_RE = re.compile(r"^([A-D])\.\s")
+BANNER_RE = re.compile(r"^\*\*【(.+?)】\*\*$")
 
-COLOR_CRITICAL_HIGH = (183, 28, 28)
-COLOR_MEDIUM = (217, 119, 6)
-COLOR_MUTED = (128, 128, 128)
-COLOR_DEFAULT = (0, 0, 0)
+# BSOS 文件規格設計系統 v1.0 — Gray 色階 (§2.1) 與 Colorful 色票 700 層級 (§2.2)。
+# 700 是規格裡「淺底用同色相 700」的規定層級（表 3.6），比 500 更深、在白底上
+# 對比度更夠，比 900 保留一點色相辨識度，不會看起來近乎黑色。
+GRAY_50 = (250, 250, 250)
+GRAY_100 = (244, 244, 245)
+GRAY_200 = (228, 228, 231)
+GRAY_300 = (212, 212, 216)
+GRAY_400 = (161, 161, 170)
+GRAY_500 = (113, 113, 122)
+GRAY_600 = (82, 82, 91)
+GRAY_700 = (63, 63, 70)
+GRAY_800 = (39, 39, 42)
+GRAY_900 = (24, 24, 27)
+
+RED_100 = (251, 231, 229)
+RED_700 = (142, 49, 40)
+ORANGE_100 = (252, 237, 221)
+ORANGE_700 = (143, 82, 16)
+YELLOW_700 = (106, 87, 9)
+BLUE_100 = (229, 237, 250)
+BLUE_700 = (36, 72, 127)
+
+COLOR_CRITICAL_HIGH = RED_700
+COLOR_MEDIUM = ORANGE_700
+COLOR_LOW = YELLOW_700
+COLOR_MUTED = GRAY_500
+COLOR_DEFAULT = GRAY_900
+COLOR_HEADING = BLUE_700
+COLOR_BANNER_BG = RED_100
+COLOR_BANNER_TEXT = RED_700
 
 
 def finding_title_color(severity: str, is_false_positive: bool):
@@ -184,6 +211,8 @@ def finding_title_color(severity: str, is_false_positive: bool):
         return COLOR_CRITICAL_HIGH
     if severity == "Medium":
         return COLOR_MEDIUM
+    if severity == "Low":
+        return COLOR_LOW
     return COLOR_DEFAULT
 
 
@@ -195,6 +224,13 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
     lines = [EMOJI_PATTERN.sub("", line).replace("\t", " ").rstrip() for line in raw_lines]
 
     pdf = FPDF()
+    # We never author intentional __underline__ spans in report content, and
+    # source text legitimately contains literal "--" (CLI flags like
+    # `--rpc-url` quoted in a finding's 說明). fpdf2 treats "--" as its
+    # underline marker; an unpaired one silently underlines everything from
+    # there to the end of the cell. Disable the marker rather than trying to
+    # escape every "--" occurrence in upstream content.
+    pdf.MARKDOWN_UNDERLINE_MARKER = "\0\0"
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.add_font("Body", "", font_path)
@@ -234,6 +270,33 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
         if color:
             pdf.set_text_color(*COLOR_DEFAULT)
 
+    def banner_box(text):
+        """A colored, rounded-corner box for standalone '**【...】**' lines
+        (currently only render_internal_banner()'s work-in-progress notice) —
+        the warning-badge treatment from the design spec's status-badge
+        pattern, applied to a full-width paragraph instead of an inline tag."""
+        pdf.set_font("Body", "B", 12)
+        pad = 4
+        page_width = pdf.w - pdf.l_margin - pdf.r_margin
+        text_width = page_width - 2 * pad
+        wrapped = pdf.multi_cell(text_width, 6, text, border=0, align="L", dry_run=True, output="LINES") or [""]
+        box_height = len(wrapped) * 6 + 2 * pad
+        if pdf.get_y() + box_height > pdf.page_break_trigger:
+            pdf.add_page()
+        y0 = pdf.get_y()
+        pdf.set_fill_color(*COLOR_BANNER_BG)
+        pdf.set_draw_color(*COLOR_BANNER_TEXT)
+        pdf.set_line_width(0.4)
+        pdf.rect(pdf.l_margin, y0, page_width, box_height, style="DF", round_corners=True, corner_radius=2.5)
+        pdf.set_draw_color(0, 0, 0)
+        pdf.set_line_width(0.2)
+        pdf.set_xy(pdf.l_margin + pad, y0 + pad)
+        pdf.set_text_color(*COLOR_BANNER_TEXT)
+        pdf.multi_cell(text_width, 6, text, border=0, align="L", markdown=True)
+        pdf.set_text_color(*COLOR_DEFAULT)
+        pdf.set_xy(pdf.l_margin, y0 + box_height)
+        pdf.ln(4)
+
     table_rows: list[str] = []
     in_table = False
 
@@ -251,8 +314,11 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
         col_width = page_width / ncols
         line_height = 5
         x0 = pdf.l_margin
+        table_top_page = pdf.page_no()
+        table_top_y = pdf.get_y()
         for i, row in enumerate(parsed):
-            is_bold_row = i == 0 or any("**" in c for c in raw_cells[i])
+            is_header = i == 0
+            is_bold_row = is_header or any("**" in c for c in raw_cells[i])
             pdf.set_font("Body", "B" if is_bold_row else "", 9)
             # Wrap each cell's text first so long content (e.g. a "說明"
             # column) doesn't overflow past its column and overlap the next
@@ -266,13 +332,51 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
             row_height = max(len(lines) for lines in cell_lines) * line_height
             if pdf.get_y() + row_height > pdf.page_break_trigger:
                 pdf.add_page()
+                table_top_page = pdf.page_no()
+                table_top_y = pdf.get_y()
             y0 = pdf.get_y()
+            # 底色：表頭 Gray 100，資料列偶數斑馬紋 Gray 50，其餘白底
+            # （BSOS 文件規格設計系統 §3 表格繪製規範 — 淺色主題）。
+            if is_header:
+                fill = GRAY_100
+            elif (i - 1) % 2 == 1:
+                fill = GRAY_50
+            else:
+                fill = None
+            if fill:
+                pdf.set_fill_color(*fill)
+                pdf.rect(x0, y0, col_width * ncols, row_height, style="F")
+            pdf.set_text_color(*(GRAY_900 if is_header else GRAY_800))
             for ci, cell in enumerate(row):
                 x = x0 + ci * col_width
-                pdf.rect(x, y0, col_width, row_height)
                 pdf.set_xy(x, y0)
                 pdf.multi_cell(col_width, line_height, cell, border=0, align="L")
+            pdf.set_text_color(*COLOR_DEFAULT)
+            # 直向欄位分隔線
+            pdf.set_draw_color(*GRAY_300)
+            pdf.set_line_width(0.15)
+            for ci in range(1, ncols):
+                x = x0 + ci * col_width
+                pdf.line(x, y0, x, y0 + row_height)
+            # 橫向列分隔線：表頭下緣加粗 Gray 400，其餘 Gray 200 細線
+            pdf.set_draw_color(*(GRAY_400 if is_header else GRAY_200))
+            pdf.set_line_width(0.3 if is_header else 0.15)
+            pdf.line(x0, y0 + row_height, x0 + col_width * ncols, y0 + row_height)
+            pdf.set_draw_color(0, 0, 0)
+            pdf.set_line_width(0.2)
             pdf.set_xy(x0, y0 + row_height)
+        table_bottom_y = pdf.get_y()
+        # 外框圓角僅在整張表未跨頁時繪製；跨頁的表格保留格線但不強行畫外框，
+        # 避免圓角矩形橫跨分頁邊界時的視覺錯誤。
+        if pdf.page_no() == table_top_page:
+            pdf.set_draw_color(*GRAY_700)
+            pdf.set_line_width(0.6)
+            pdf.rect(
+                x0, table_top_y, col_width * ncols, table_bottom_y - table_top_y,
+                round_corners=True, corner_radius=2.5,
+            )
+            pdf.set_draw_color(0, 0, 0)
+            pdf.set_line_width(0.2)
         pdf.ln(4)
         pdf.set_x(pdf.l_margin)
 
@@ -312,13 +416,20 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
             heading_text = stripped[4:]
             m = CATEGORY_HEADING_RE.match(heading_text)
             current_category = m.group(1) if m else None
-            para(heading_text, size=13, style="B", gap=8)
+            para(heading_text, size=13, style="B", gap=8, color=COLOR_HEADING)
         elif stripped.startswith("## "):
             current_category = None
-            para(stripped[3:], size=15, style="B", gap=9)
+            para(stripped[3:], size=15, style="B", gap=9, color=COLOR_HEADING)
+            y = pdf.get_y()
+            pdf.set_draw_color(*COLOR_HEADING)
+            pdf.set_line_width(0.5)
+            pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
+            pdf.set_draw_color(0, 0, 0)
+            pdf.set_line_width(0.2)
+            pdf.ln(3)
         elif stripped.startswith("# "):
             current_category = None
-            para(stripped[2:], size=18, style="B", gap=10)
+            para(stripped[2:], size=18, style="B", gap=10, color=COLOR_HEADING)
         elif stripped == "---":
             pdf.ln(2)
             y = pdf.get_y()
@@ -343,6 +454,8 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
                 if sev_match:
                     color = finding_title_color(sev_match.group(1), current_category == "C")
             bullet(content, indent_mm=depth * 5, color=color)
+        elif BANNER_RE.match(stripped):
+            banner_box(BANNER_RE.match(stripped).group(1))
         else:
             para(stripped, size=11)
 
