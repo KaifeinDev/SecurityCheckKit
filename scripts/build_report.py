@@ -38,6 +38,15 @@ from filter_results import extract_findings  # noqa: E402
 from md_to_pdf import find_cjk_font  # noqa: E402
 
 IMPACT_ORDER = ["High", "Medium", "Low", "Informational", "Optimization"]
+# Manual findings can be "Critical" (MANUAL_SEVERITIES), scan findings top
+# out at "High" (Slither's own scale) — one combined rank so both kinds can
+# sort into a single summary table together.
+SEVERITY_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4, "Optimization": 5}
+# Remediation status is tracked separately from the A/B/C/D risk category —
+# category answers "is this real and does it matter", status answers "has it
+# been fixed yet". Optional field on both findings[] entries and
+# manual_findings[] entries; absent means not yet triaged for remediation.
+DEFAULT_STATUS = "待處理"
 # Severity/impact values are shown verbatim as Slither outputs them (High,
 # Medium, Critical, ...) everywhere in the report — not translated — so a
 # client rescan's raw output can be correlated line-by-line against this
@@ -235,8 +244,11 @@ def make_chart(before_counts, after_counts, out_path):
     x = range(len(labels))
     width = 0.35
     fig, ax = plt.subplots(figsize=(7, 3.2))
-    ax.bar([i - width / 2 for i in x], before_vals, width, label="工具原始輸出", color="#c0392b")
-    ax.bar([i + width / 2 for i in x], after_vals, width, label="交付版掃描結果", color="#2e7d32")
+    # BSOS 文件規格設計系統 v1.0 §2.2 Colorful 700 層級：Red 700（工具原始輸出）
+    # 與 Blue 700（交付版掃描結果），與 md_to_pdf.py 的 RED_700/BLUE_700 對齊，
+    # 讓圖表與報告正文（標題色、Critical/High 底色）共用同一套色票。
+    ax.bar([i - width / 2 for i in x], before_vals, width, label="工具原始輸出", color="#8E3128")
+    ax.bar([i + width / 2 for i in x], after_vals, width, label="交付版掃描結果", color="#24487F")
     ax.set_xticks(list(x))
     ax.set_xticklabels(labels)
     ax.set_ylabel("發現數量")
@@ -451,6 +463,37 @@ def render_summary_table(before_counts, after_counts):
     return intro + "\n" + "\n".join(lines) + "\n"
 
 
+def render_findings_summary_table(effective, manual, classification_provided):
+    """One row per finding that actually needs a decision or action: A-class
+    scan findings, plus every manual finding (which by definition is never a
+    false positive — see MANUAL_CATEGORIES). B/C scan findings are excluded
+    on purpose: they're already covered exhaustively in the classification
+    detail section, and listing all 100+ of them here would bury the
+    handful that matter under noise a reader has to scroll past.
+
+    This complements — does not replace — the severity-count table:
+    severity counts answer "how bad is what's left"; this table answers
+    "which specific items, and what's the status of each" at a glance,
+    before the reader has to open individual finding write-ups."""
+    if not classification_provided:
+        return "_未提供分類資料（Step 2 未寫入 classification.json），無法列出總表。_\n"
+    rows = []
+    for f in effective:
+        if f["category"] == "A":
+            ident = f"#{f['id']}" if f["id"] is not None else "未編號"
+            rows.append((SEVERITY_RANK.get(f["impact"], 99), ident, f["check"], f["impact"], f.get("status") or DEFAULT_STATUS))
+    for m in manual:
+        title = m.get("title") or (m.get("description") or "")[:40]
+        rows.append((SEVERITY_RANK.get(m.get("severity"), 99), str(m.get("id")), title, m.get("severity"), m.get("status") or DEFAULT_STATUS))
+    if not rows:
+        return "本次無需要決策或處理的發現（所有掃描發現皆為 B/C 類，且無人工複核發現）。\n"
+    rows.sort(key=lambda r: r[0])
+    lines = ["| 編號 | 標題 | 嚴重度 | 狀態 |", "|---|---|---|---|"]
+    for _, ident, title, severity, status in rows:
+        lines.append(f"| {ident} | {title} | {severity} | {status} |")
+    return "\n".join(lines) + "\n"
+
+
 def render_manual_findings(manual, classification_provided):
     if not classification_provided:
         return "_未提供分類資料（Step 2 未寫入 classification.json），人工複核結果不明。_\n"
@@ -466,8 +509,10 @@ def render_manual_findings(manual, classification_provided):
         title = m.get("title") or (m.get("description") or "")[:60]
         loc = f"{m.get('file', '?')}:{format_lines(m.get('lines'))}"
         scenario = f"／情境 {m['scenario']}" if m.get("scenario") else ""
+        status = m.get("status") or DEFAULT_STATUS
         lines.append(
-            f"- **編號 {m.get('id')}｜{title}**（嚴重度：{m.get('severity')}／分類 {m.get('category')}{scenario}）— {loc}"
+            f"- **編號 {m.get('id')}｜{title}**（嚴重度：{m.get('severity')}／分類 {m.get('category')}"
+            f"{scenario}／狀態：{status}）— {loc}"
         )
         desc = (m.get("description") or "").replace("\n", " ").strip()
         if desc:
@@ -534,7 +579,11 @@ def render_classification_detail(effective, classification_provided, after_list)
         for item in items:
             ident = f"編號 {item['id']}" if item["id"] is not None else "未編號（不在分類紀錄中）"
             loc = f"{item['file']}:{format_lines(item['lines'])}"
-            lines.append(f"- **{ident}｜{item['check']}**（嚴重度：{item['impact']}）— {loc}")
+            # Status (remediation progress) only means something for A/D —
+            # B/C are permanent verdicts (accepted risk / false positive),
+            # not things with a "fixed yet?" lifecycle.
+            status_suffix = f"／狀態：{item.get('status') or DEFAULT_STATUS}" if cat in ("A", "D") else ""
+            lines.append(f"- **{ident}｜{item['check']}**（嚴重度：{item['impact']}{status_suffix}）— {loc}")
             desc = item["description"].replace("\n", " ").strip()
             if desc:
                 lines.append(f"  - 原始描述：{desc}")
@@ -667,38 +716,47 @@ def main() -> None:
 {render_executive_summary(grade_info, before_counts, after_counts, manual, before_after_identical, effective)}
 ---
 
-## 2. 檢測方法與範圍限制
+## 2. 待決策／待處理項目總表
+
+以下只列出需要決策或行動的項目（掃描發現中的 A 類，以及全部人工複核發現——人工發現依規則不會是 C 類誤報）。
+B/C 類掃描發現數量龐大且已判定為可接受風險或誤報，不在此重複列出，完整清單見「9. 完整分類明細」。
+**狀態欄位反映本次產出報告當下的處置進度**，尚未標註狀態的項目預設顯示「{DEFAULT_STATUS}」。
+
+{render_findings_summary_table(effective, manual, classification is not None)}
+---
+
+## 3. 檢測方法與範圍限制
 
 {render_limitations()}
 ---
 
-## 3. 掃描環境資訊
+## 4. 掃描環境資訊
 
 {render_env_table(env)}
 ---
 
-## 4. 摘要統計
+## 5. 摘要統計
 
 {render_summary_table(before_counts, after_counts)}
 ---
 
-## 5. 掃描結果對照圖表
+## 6. 掃描結果對照圖表
 
 ![各嚴重度發現數量對照：工具原始輸出與交付版掃描結果](severity_chart.png)
 
 ---
 
-## 6. 人工複核發現
+## 7. 人工複核發現
 
 {render_manual_findings(manual, classification is not None)}
 ---
 
-## 7. 複核提醒：重複使用的判斷理由
+## 8. 複核提醒：重複使用的判斷理由
 
 {render_duplicate_dev_note_warning(dup_groups)}
 ---
 
-## 8. 完整分類明細
+## 9. 完整分類明細
 
 {render_classification_detail(effective, classification is not None, after_list)}
 ---

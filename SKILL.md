@@ -112,6 +112,8 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 
 人工發現會進報告的「人工複核發現」章節並參與資安等級計算（Critical/High 直接判第四級）。**特別留意**：凡是分類理由想寫「僅 owner/admin 可呼叫所以可接受」，必須先實際檢查該 modifier / require 的實作邏輯是不是真的有效，並把檢查結果寫進 dev_note —— 權限檢查本身壞掉是 Slither 抓不到的典型漏報。
 
+**選填的 `status` 欄位（修復進度追蹤，跟 `category` 是兩件事）**：`findings[]`／`manual_findings[]` 的每一筆都可以額外加一個 `status` 欄位，記錄目前的修復／處置進度（例如 `"待處理"`、`"已修復"`、`"已確認接受風險"`），跟 `category`（這是不是問題、算哪一類）是正交的兩個維度——`category` 定案後通常不會再變，`status` 會隨著專案團隊的修復進度持續更新。此欄位為選填、不驗證固定字典，缺省時報告顯示「待處理」。只有 `category=A` 的掃描發現與**全部** `manual_findings`（依規則永遠不是 C 類，見上方 category 限制）才會進入報告新增的「待決策／待處理項目總表」（B/C 類是永久性判定，沒有「修復進度」這個概念，不適用 `status`）。等專案開始修復後，重跑報告時把對應項目的 `status` 更新掉，總表跟逐筆明細會一起反映最新進度，不需要另外開新文件追蹤。
+
 掃描結果裡的**每一筆**發現都要分類：Step 4 會把 classification.json 跟掃描結果逐筆核對，漏掉的一律視同 D（待確認），未分類的 High 直接把等級打成第四級。
 
 **重掃沿用（`--prev-classification`）的複核義務**：skeleton 裡標 `carried_from_previous: "exact"` 的項目可視為已分類，但列給使用者時要註明是沿用；標 `"fallback"` 的（行號位移、用 check+file 對上的）必須逐筆重讀確認沒對錯行；帶入的 manual_findings（標 `"manual"`）不隨掃描結果失效，要逐筆重新確認仍然成立，已修復的直接刪除。
