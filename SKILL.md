@@ -160,8 +160,10 @@ python3 .claude/skills/security-scan/scripts/cli.py report \
 這個指令依序呼叫 `build_report.py`（產生 `report.md` + `severity_chart.png`，需要 `matplotlib`）與 `md_to_pdf.py`（轉成 `report.pdf`，需要 `fpdf2`）。這兩個套件要裝在系統 python（不是 slither 用的 venv，venv 的 pip 曾經壞掉過，見 `pitfalls.md`）：
 
 ```bash
-python3 -m pip install --user --break-system-packages fpdf2 matplotlib
+python3 -m pip install --user --break-system-packages "fpdf2>=2.8.8" matplotlib
 ```
+
+`fpdf2` 版本要 **2.8.8 以上**：2.8.7 有一個字型子集化的靜默亂碼 bug，會把封面頁的短 ASCII 文字（`檢測工具`／`檢測日期`）畫錯但不拋例外，見 `pitfalls.md` #6。
 
 `cli.py report` 會自動探測「哪個 python 真的裝了 fpdf2/matplotlib」，就算目前在 slither 的 venv 底下執行也能找到系統 python；找不到時會清楚報錯並提示設定 `SECURITY_SCAN_REPORT_PYTHON` 環境變數指向正確的 python。
 
