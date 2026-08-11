@@ -224,9 +224,23 @@ def render_cover_page(pdf, tool_value: str, date_value: str) -> None:
     pdf.add_page()
     pdf.image(COVER_TEMPLATE_PATH, x=0, y=0, w=210, h=297)
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Body", "B", 15.5)
+    # Deliberately fpdf2's built-in Helvetica core font here, not the CJK
+    # "Body" font: these two values are always short ASCII (a tool name, an
+    # ISO timestamp). Routing them through "Body" produced silently garbled
+    # glyphs ("Slither" -> "6B") once the CJK font's subset grew large across
+    # a full ~30-page report — reproducible, and only affected this cover
+    # text; every other page's CJK rendering was unaffected. Root cause not
+    # fully isolated (fpdf2/fonttools subsetting on a TTC with a large used-
+    # glyph count from this specific PingFang.ttc build); side-stepping it
+    # via a core font is more robust than chasing the subsetter bug, since
+    # these values were never going to need CJK glyphs anyway.
+    is_ascii = lambda s: all(ord(c) < 128 for c in s)  # noqa: E731
+    tool_font = "Helvetica" if is_ascii(tool_value) else "Body"
+    date_font = "Helvetica" if is_ascii(date_value) else "Body"
+    pdf.set_font(tool_font, "B", 15.5)
     pdf.set_xy(*COVER_TOOL_XY_MM)
     pdf.cell(120, COVER_VALUE_ROW_H_MM, tool_value, align="L")
+    pdf.set_font(date_font, "B", 15.5)
     pdf.set_xy(*COVER_DATE_XY_MM)
     pdf.cell(150, COVER_VALUE_ROW_H_MM, date_value, align="L")
     pdf.set_text_color(*COLOR_DEFAULT)
