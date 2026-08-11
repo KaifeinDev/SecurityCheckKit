@@ -224,23 +224,23 @@ def render_cover_page(pdf, tool_value: str, date_value: str) -> None:
     pdf.add_page()
     pdf.image(COVER_TEMPLATE_PATH, x=0, y=0, w=210, h=297)
     pdf.set_text_color(255, 255, 255)
-    # Deliberately fpdf2's built-in Helvetica core font here, not the CJK
-    # "Body" font: these two values are always short ASCII (a tool name, an
-    # ISO timestamp). Routing them through "Body" produced silently garbled
-    # glyphs ("Slither" -> "6B") once the CJK font's subset grew large across
-    # a full ~30-page report — reproducible, and only affected this cover
-    # text; every other page's CJK rendering was unaffected. Root cause not
-    # fully isolated (fpdf2/fonttools subsetting on a TTC with a large used-
-    # glyph count from this specific PingFang.ttc build); side-stepping it
-    # via a core font is more robust than chasing the subsetter bug, since
-    # these values were never going to need CJK glyphs anyway.
-    is_ascii = lambda s: all(ord(c) < 128 for c in s)  # noqa: E731
-    tool_font = "Helvetica" if is_ascii(tool_value) else "Body"
-    date_font = "Helvetica" if is_ascii(date_value) else "Body"
-    pdf.set_font(tool_font, "B", 15.5)
+    pdf.set_font("Body", "B", 15.5)
+    # KNOWN ISSUE, not yet root-caused: with some CJK font files (confirmed
+    # on a Noto Sans CJK TC .otf build) these two short ASCII cells
+    # intermittently render as garbled glyphs ("Slither" -> "6B") on a full
+    # ~30-page report, even though the PDF's underlying text layer stays
+    # correct (copy/paste and pdf.get_text() both read back correctly —
+    # only the drawn glyphs are wrong). Not reproducible on an isolated
+    # single-page cover, and not reproducible at all so far with a PingFang
+    # .ttc build, so this looks like an fpdf2/fonttools glyph-subsetting bug
+    # tied to specific font file internals rather than anything in this
+    # function. Tried routing this text through fpdf2's core Helvetica font
+    # instead of "Body" to dodge it — made things worse (corrupted CJK
+    # rendering on *every* other page, not just the cover). Until root-
+    # caused: prefer a PingFang-family font for report generation if you hit
+    # this, and visually spot-check the cover after generating.
     pdf.set_xy(*COVER_TOOL_XY_MM)
     pdf.cell(120, COVER_VALUE_ROW_H_MM, tool_value, align="L")
-    pdf.set_font(date_font, "B", 15.5)
     pdf.set_xy(*COVER_DATE_XY_MM)
     pdf.cell(150, COVER_VALUE_ROW_H_MM, date_value, align="L")
     pdf.set_text_color(*COLOR_DEFAULT)
