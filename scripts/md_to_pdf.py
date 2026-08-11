@@ -200,6 +200,37 @@ COLOR_HEADING = BLUE_700
 COLOR_BANNER_BG = RED_100
 COLOR_BANNER_TEXT = RED_700
 
+# Designer-supplied cover background (assets/cover_template.png, rasterized
+# from Untitled.svg — BSOS logo + hexagon/gradient-sphere decoration, A4 @
+# 150dpi, 1240x1754px). The "檢測工具"/"檢測日期" value text from the
+# designer's mockup was cut out (see cover_blanked crop step in dev history)
+# so real values can be drawn on top at build time; the title and field
+# labels are baked into the image since they're constant across reports.
+COVER_TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "cover_template.png")
+_COVER_IMG_W, _COVER_IMG_H = 1240, 1754  # px, matches the asset above
+# Bounding boxes measured directly off the 300dpi source render (2481x3509)
+# by isolating non-background pixels per text row, then halved for the
+# 150dpi asset — see dev history for the measurement script. Given in mm
+# (A4 = 210x297mm) so they're resolution-independent of the asset itself.
+COVER_TOOL_XY_MM = (699 * 210 / 2481, 1606 * 297 / 3509 - 0.3)
+COVER_DATE_XY_MM = (699 * 210 / 2481, 1698 * 297 / 3509 - 0.3)
+COVER_VALUE_ROW_H_MM = (1654 - 1606) * 297 / 3509 + 0.6
+COVER_TITLE_RE = re.compile(r"^#\s+(.+)$")
+COVER_TOOL_RE = re.compile(r"^\*\*檢測工具\*\*[:：]\s*(.+)$")
+COVER_DATE_RE = re.compile(r"^\*\*檢測日期\*\*[:：]\s*(.+)$")
+
+
+def render_cover_page(pdf, tool_value: str, date_value: str) -> None:
+    pdf.add_page()
+    pdf.image(COVER_TEMPLATE_PATH, x=0, y=0, w=210, h=297)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Body", "B", 15.5)
+    pdf.set_xy(*COVER_TOOL_XY_MM)
+    pdf.cell(120, COVER_VALUE_ROW_H_MM, tool_value, align="L")
+    pdf.set_xy(*COVER_DATE_XY_MM)
+    pdf.cell(150, COVER_VALUE_ROW_H_MM, date_value, align="L")
+    pdf.set_text_color(*COLOR_DEFAULT)
+
 
 def finding_title_color(severity: str, is_false_positive: bool):
     """Findings unrelated to exploitable security risk (false positives, or
@@ -232,9 +263,44 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
     # escape every "--" occurrence in upstream content.
     pdf.MARKDOWN_UNDERLINE_MARKER = "\0\0"
     pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
     pdf.add_font("Body", "", font_path)
     pdf.add_font("Body", "B", bold_font_path or font_path)
+
+    # The cover page's title/tool/date come straight out of the report's own
+    # first lines (single source of truth) rather than being passed in
+    # separately. If found and the bundled asset is present, render a cover
+    # and drop those exact lines from the normal body flow so they don't
+    # also print again as the first thing on page 2.
+    skip_line_indices = set()
+    if os.path.isfile(COVER_TEMPLATE_PATH):
+        title_idx = tool_idx = date_idx = None
+        tool_value = date_value = None
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if title_idx is None and COVER_TITLE_RE.match(stripped):
+                title_idx = i
+            m_tool = COVER_TOOL_RE.match(stripped)
+            m_date = COVER_DATE_RE.match(stripped)
+            if m_tool and tool_value is None:
+                tool_value, tool_idx = m_tool.group(1), i
+            if m_date and date_value is None:
+                date_value, date_idx = m_date.group(1), i
+            if None not in (title_idx, tool_value, date_value):
+                break
+        if None not in (title_idx, tool_value, date_value):
+            render_cover_page(pdf, tool_value, date_value)
+            skip_line_indices = {title_idx, tool_idx, date_idx}
+            # Also absorb the blank lines and the "---" divider right after
+            # the metadata block (report.md always has one there, closing
+            # off the title/tool/date header) so page 2 doesn't open on a
+            # stray empty gap + orphaned horizontal rule.
+            j = max(skip_line_indices) + 1
+            while j < len(lines) and lines[j].strip() == "":
+                skip_line_indices.add(j)
+                j += 1
+            if j < len(lines) and lines[j].strip() == "---":
+                skip_line_indices.add(j)
+    pdf.add_page()
     pdf.set_font("Body", "", 11)
 
     def para(text, size=11, style="", gap=6, color=None):
@@ -387,7 +453,9 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
     # section) and updated on every "### " category sub-heading.
     current_category = None
 
-    for line in lines:
+    for line_idx, line in enumerate(lines):
+        if line_idx in skip_line_indices:
+            continue
         stripped = line.strip()
 
         if stripped.startswith("|"):
