@@ -80,9 +80,31 @@ require(spent_ <= limit_, "ERC20TransferAmountEnforcer:allowance-exceeded");
 2. **情境庫是唯一有效的一層，但需要持續擴充**：這次兩條 Medium/High 都落在既有 18 條之外，補完後才涵蓋。兩次回測共長出 5 條情境（L14-L18）。
 3. **降噪參數在乾淨 codebase 上效果更好**：252 筆 → 43 筆需人工判斷（83% 降幅）。
 
+## 三次「檔名巧合」近似誤判（重要）
+
+本次有三組 Slither 發現，其檔案與函式恰好就是 Cyfrin findings 所指的位置，讀完描述才確認**全部無關**：
+
+| Slither | 落在 | 看似對應 | 實際 |
+|---|---|---|---|
+| `unused-return` ×3 | `ERC20TransferAmountEnforcer`、`NativeTokenTransferAmountEnforcer` | M-1 額度記帳缺陷 | 報的是 `decodeSingle()` 解構丟棄欄位，良性 |
+| `timestamp` ×1 | `TimestampEnforcer` | L-5 時間範圍驗證不一致 | 通用「用了 block.timestamp 比較」，抓不到 before/after 一致性缺失 |
+| `missing-zero-check` ×1 | `NativeTokenPaymentEnforcer` | I-4 delegate 位址驗證不足 | 報的是建構子參數缺零值檢查，與 `afterAllHook()` 的 delegate 驗證無關 |
+
+若以「檔名＋函式名對得上」判定命中，這次回測會得出「13 筆命中 3」的錯誤結論。**回測比對必須逐筆讀描述，不能靠位置比對。** 三筆的 dev_note 都明確寫出「這與參考報告 X 不是同一個問題」，避免日後誤讀。
+
+## 完整報告產出（Step 2 + Step 4）
+
+**分類結果**（252 筆）：A 0、B 16、C 236（含風格預分類 209）、D 0。
+**人工複核發現 2 筆**：M1（High／情境 L18）、M2（Medium／情境 L17）。
+**資安等級第四級**，exit code 4——M1 為 High 且屬 A 類，依規則直接判第四級。Step 3 跳過（第三方 repo，不改其原始碼），故報告中「忽略前／忽略後」數字相同。
+
+**來源揭露**：M1／M2 是**自參考報告轉錄後回到原始碼確認**，不是本工具獨立發現。兩筆的 `dev_note` 都以粗體明寫此事。回測的目的是誠實計算命中率，若把轉錄來的發現當成自有產出，整份比較就失去意義。
+
+分類過程中依 L13 情境查證了 `entryPoint` 是否可事後替換（結論：`immutable`，不適用），這是 `arbitrary-send-eth` 判為誤判的必要前提——`_payPrefund` 的收款方恆為 EntryPoint，而非 Slither 所稱的任意地址。
+
 ## 待辦
 
-Step 2（43 筆分類 + 全庫情境比對）與 Step 4（產報告）尚未執行，本文件僅涵蓋掃描與逐條比對。
+Cyfrin 對此專案另有 part 2／3／4 與 TotalBalanceEnforcer 共 4 份報告，可作為**增量回測**驗證新增的 L17／L18 是否真能抓到同型問題——這正是 `logic_scan.md` 維護規則要求的回歸驗證。
 
 ## 可重現步驟
 
