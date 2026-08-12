@@ -546,10 +546,67 @@ def render_duplicate_dev_note_warning(dup_groups):
     ]
     for items in dup_groups:
         checks = sorted({f["check"] for f in items})
-        ids = [f"編號{f['id']}" if f["id"] is not None else "未編號" for f in items]
-        lines.append(f"- **{len(items)} 筆共用同一段理由**（detector：{', '.join(checks)}）：{', '.join(ids)}")
-        lines.append(f"  - 理由全文：{items[0]['dev_note']}")
+        files = sorted({f["file"].split("/")[-1] for f in items})
+        # Enumerating every id turned this section into pages of "編號209, 編號210,
+        # ..." for a 169-finding group -- the reviewer needs to know WHICH group to
+        # spot-check, not to read every member. Show a handful as entry points and
+        # keep the id list itself in classification.json.
+        sample = [f"編號{f['id']}" if f["id"] is not None else "未編號" for f in items[:5]]
+        more = f" 等 {len(items)} 筆" if len(items) > len(sample) else ""
+        file_note = "、".join(files[:4]) + (f" 等 {len(files)} 檔" if len(files) > 4 else "")
+        lines.append(
+            f"- **{len(items)} 筆共用同一段理由**（detector：{', '.join(checks)}；涉及 {file_note}）："
+            f"{', '.join(sample)}{more}"
+        )
+        note = items[0]["dev_note"].replace("\n", " ")
+        if len(note) > 160:
+            note = note[:160] + "…（全文見該筆分類明細）"
+        lines.append(f"  - 理由摘要：{note}")
     return "\n".join(lines) + "\n"
+
+
+def render_grouped_findings(items, with_locations):
+    """Collapse findings into one row per (detector, rationale).
+
+    A report is the conclusions, not the working. Listing every finding
+    individually buries the handful that need action -- a real run produced
+    377 C and 37 B findings against 8 actionable ones, with one B rationale
+    repeated verbatim 21 times. Grouping is by (check, dev_note) rather than
+    check alone, because the same detector can be judged differently in
+    different files and merging those would misattribute the reasoning.
+
+    `with_locations` keeps every file:line for B, where the client still has
+    to find the code to decide whether to accept the risk; C only needs the
+    file spread, since its conclusion is "no action". Per-finding records stay
+    in classification.json either way, so a re-scan reconciles every row.
+    """
+    groups = {}
+    for item in items:
+        key = (item["check"], (item.get("dev_note") or "").strip())
+        groups.setdefault(key, []).append(item)
+
+    if with_locations:
+        head = (f"本類共 {len(items)} 筆，歸併為 {len(groups)} 組判定。"
+                "問題確實存在但經評估風險可控，逐組列出全部位置與接受理由。\n")
+        cols = "| 檢查器 | 筆數 | 位置 | 接受理由 |"
+    else:
+        head = (f"本類共 {len(items)} 筆，歸併為 {len(groups)} 組判定。"
+                "均為靜態分析器的誤判或無安全影響項目，不需處置。\n")
+        cols = "| 檢查器 | 筆數 | 涉及檔案 | 判定理由 |"
+
+    lines = [head, cols, "|---|---|---|---|"]
+    for (check, note), group in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0][0])):
+        if with_locations:
+            locs = "；".join(
+                f"{item['file'].split('/')[-1]}:{format_lines(item['lines'])}" for item in group
+            )
+        else:
+            files = sorted({item["file"].split("/")[-1] for item in group})
+            locs = "、".join(files[:3]) + (f" 等 {len(files)} 檔" if len(files) > 3 else "")
+        cell = (note or "—").replace("\n", " ").replace("|", "\\|")
+        lines.append(f"| {check} | {len(group)} | {locs} | {cell} |")
+    lines.append("")
+    return lines
 
 
 def render_classification_detail(effective, classification_provided, after_list):
@@ -571,9 +628,13 @@ def render_classification_detail(effective, classification_provided, after_list)
         None: "未分類（視同待人工確認）",
     }
     intro = (
-        "以下依處置分類逐筆列出本次掃描的全部發現。各筆開頭的「編號 N」為掃描發現之流水號"
+        "以下依處置分類列出本次掃描的發現。各筆開頭的「編號 N」為掃描發現之流水號"
         "（依掃描輸出順序編定，與「附錄一：待人工確認清單」的編號一致，便於對照）；"
-        "無該類項目時以「—」表示。\n"
+        "無該類項目時以「—」表示。\n\n"
+        "其中 B（已知風險）與 C（誤報）以彙總方式呈現：這兩類的結論分別是「已評估後接受」與"
+        "「不需處置」，逐筆展開同一段理由只會稀釋真正需要行動的項目，故按「檢查器 × 判定理由」"
+        "歸併；B 類仍逐組列出全部位置，供後續查核。A 與 D 類逐筆完整列出。每一筆的逐項紀錄"
+        "均保存在 classification.json，重掃時可逐筆對帳，稽核性不受影響。\n"
     )
     lines = [intro]
     for cat in ["A", "B", "C", "D", None]:
@@ -583,6 +644,9 @@ def render_classification_detail(effective, classification_provided, after_list)
         lines.append(f"### {label[cat]}\n")
         if not items:
             lines.append("—\n")
+            continue
+        if cat in ("B", "C"):
+            lines.extend(render_grouped_findings(items, with_locations=(cat == "B")))
             continue
         for item in items:
             ident = f"編號 {item['id']}" if item["id"] is not None else "未編號（不在分類紀錄中）"

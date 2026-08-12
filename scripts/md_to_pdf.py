@@ -168,10 +168,26 @@ def strip_inline_markup(text: str) -> str:
     return text
 
 
+# fpdf2's markdown=True treats a DOUBLE underscore as an italic delimiter and
+# consumes it. Solidity reports are full of identifiers that start with one --
+# OpenZeppelin's `__gap` storage slot and every `__Xxx_init` initializer -- so
+# `__gap` silently rendered as `gap` in the PDF while the markdown source was
+# correct. Corrupting an identifier in a security report is worse than losing
+# italics, and there is no escape syntax in fpdf's markdown, so break the
+# delimiter pair with a zero-width space: visually identical, no longer parsed
+# as markup. Single underscores and single asterisks are left alone -- verified
+# not to be delimiters. `**bold**` is deliberately preserved.
+_ZWSP = "​"
+
+
+def neutralize_markdown_delimiters(text: str) -> str:
+    return text.replace("__", f"_{_ZWSP}_")
+
+
 def strip_code_markup(text: str) -> str:
     """Drop inline-code backticks but keep **bold** markers intact — those are
     rendered by fpdf2's own markdown=True, not manually stripped."""
-    return re.sub(r"`(.*?)`", r"\1", text)
+    return neutralize_markdown_delimiters(re.sub(r"`(.*?)`", r"\1", text))
 
 
 SEVERITY_RE = re.compile(r"嚴重度[：:]\s*([A-Za-z]+)")
@@ -378,6 +394,13 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_font("Body", "", font_path)
     pdf.add_font("Body", "B", bold_font_path or font_path)
+    # fpdf2's markdown parser can emit style "I"/"BI" for text we never meant
+    # as italic, and an unregistered style raises rather than degrading -- one
+    # stray delimiter in one finding aborted the whole PDF. CJK faces rarely
+    # ship a true italic, so alias them to the upright faces: the report keeps
+    # rendering instead of dying over emphasis nobody asked for.
+    pdf.add_font("Body", "I", font_path)
+    pdf.add_font("Body", "BI", bold_font_path or font_path)
 
     # The cover page's / running header's title/tool/date come straight out
     # of the report's own first lines (single source of truth) rather than
@@ -398,7 +421,9 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
         if m_tool and tool_value is None:
             tool_value, tool_idx = m_tool.group(1), i
         if m_date and date_value is None:
-            date_value, date_idx = m_date.group(1), i
+            # scan_date is an ISO timestamp with microseconds; the cover and
+            # running header want a date, not "2026-08-12T22:47:07.263397".
+            date_value, date_idx = m_date.group(1).split("T")[0].strip(), i
         if None not in (title_idx, tool_value, date_value):
             break
     pdf.report_title = title_value or ""
