@@ -102,9 +102,53 @@ require(spent_ <= limit_, "ERC20TransferAmountEnforcer:allowance-exceeded");
 
 分類過程中依 L13 情境查證了 `entryPoint` 是否可事後替換（結論：`immutable`，不適用），這是 `arbitrary-send-eth` 判為誤判的必要前提——`_payPrefund` 的收款方恆為 EntryPoint，而非 Slither 所稱的任意地址。
 
-## 待辦
+## 補強一：建立 AA 領域事故庫
 
-Cyfrin 對此專案另有 part 2／3／4 與 TotalBalanceEnforcer 共 4 份報告，可作為**增量回測**驗證新增的 L17／L18 是否真能抓到同型問題——這正是 `logic_scan.md` 維護規則要求的回歸驗證。
+第一輪回測「命中 0」的根因不是方法不適用，而是**這個領域的知識沒進庫**：`domain_incidents/` 當時只有 `rwa.md`，KMS 跑 Rule 1 走的是「檔案不存在」分支，等於零先驗知識；而 18 條通用情境只有 2 條（還是這次才補的 L17／L18）碰得到授權框架。
+
+依 Rule 1 對此領域做外部調查後建立 `references/domain_incidents/account-abstraction.md`，8 條模式：執行入口缺 EntryPoint 驗證、簽章未涵蓋 gas 欄位、驗證階段寫入狀態被同批次覆寫、ERC-1271 缺 domain 綁定、依賴 revert 阻止付款、ERC-7702 初始化搶跑、違反 ERC-7562 驗證範圍限制、重入防護前提被 AA 打破。
+
+**循環論證警告**：這份領域檔是**讀過 part 1 之後**寫的。用 part 1 驗證它會是循環論證，故不計入命中率。可以說的只有：`D-AA-04` 的標準查證問題第 2 項（「是否綁定了所有可替換的執行入口——EntryPoint、router、實作版本？」）確實直指 part 1 的 H-1。
+
+## 補強二：增量回測（part 2，未讀過即先寫下預測）
+
+用 **Cyfrin part 2**（2025-04-01，commit `cdd39c6`，10 findings：Medium 4、Low 2、Info 1、Gas 3）做非循環驗證。撰寫 L17／L18 時尚未讀過此報告。
+
+### L17 回歸驗證通過
+
+part 2 的 **M-1「Streaming enforcers increase token spending even without actual token transfer」** 四個要素全中 L17：
+
+```solidity
+// ERC20StreamingEnforcer._validateAndConsumeAllowance
+// @issue This line increases the spent amount BEFORE the actual transfer happens
+allowance_.spent += transferAmount_;
+```
+
+前置鉤子記帳 ✓、取自 calldata 意圖值（`callData_[36:68]`）✓、`EXECTYPE_TRY` 失敗不回滾 ✓、反覆失敗執行耗盡額度 ✓。且發生在**不同的 enforcer 家族**（`ERC20StreamingEnforcer`／`NativeTokenStreamingEnforcer`，而非 part 1 的 TransferAmount 系列）。
+
+這是 `logic_scan.md` 維護規則所要求的回歸驗證，且來源資料在情境撰寫時未被讀過，**非循環**。
+
+### 一個對「情境庫 vs 逐檔人工審計」有利的觀察
+
+MetaMask 在 part 1 修好了 TransferAmount enforcer 的這個缺陷（commit 已記於報告），但**同型 bug 在 Streaming enforcer 原封不動存在**，兩週後才由 part 2 抓到。逐檔人工審計會漏掉沒排進當次範圍的同型實例；而「對掃描範圍內每一份合約跑完全部情境」的系統性掃法，會一次抓到兩組。這正是 `logic_scan.md` 規則 3（不是「看到可疑才查」）存在的理由。
+
+### part 2 仍未涵蓋的部分
+
+| part 2 finding | 現有庫 |
+|---|---|
+| M-1 Streaming enforcer 額度耗盡 | ✅ **L17 命中** |
+| M-2 API 與 swap payload 不一致可導致未授權轉帳 | 未涵蓋 |
+| M-3 `SpecificActionERC20TransferBatchEnforcer` 可耗盡無限 gas | 部分（D-AA-05 的 griefing 主題，但非同一機制） |
+| M-4 不相容 fee-on-transfer 代幣 | 未涵蓋（通用 DeFi 模式，非 AA 專屬） |
+| L-1 匯入了有 bug 的 `erc7579-implementation` commit | 未涵蓋（相依套件版本，供應鏈類） |
+
+10 筆命中 1 筆。比第一輪的 13 筆命中 0 有改善，但幅度有限——單一情境命中單一 finding，尚不足以宣稱這個領域已被有效涵蓋。
+
+## 目前結論
+
+- 「工具對 KMS 領域無效」在**第一輪的狀態下成立**，根因是領域知識未入庫、通用情境偏 DeFi 形狀。
+- 補完 L17／L18 與 AA 領域檔後，在未讀過的 part 2 上取得 1 次非循環命中，證明**機制會累積、會泛化**，但覆蓋率仍低。
+- 誠實的說法是：**方法可行，知識不足**。要讓這個領域達到可用水準，需要再跑 part 3／4／TotalBalanceEnforcer 並持續補條目，而非宣稱已解決。
 
 ## 可重現步驟
 
