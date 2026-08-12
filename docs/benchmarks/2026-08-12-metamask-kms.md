@@ -144,6 +144,51 @@ MetaMask 在 part 1 修好了 TransferAmount enforcer 的這個缺陷（commit �
 
 10 筆命中 1 筆。比第一輪的 13 筆命中 0 有改善，但幅度有限——單一情境命中單一 finding，尚不足以宣稱這個領域已被有效涵蓋。
 
+## 補強三：跑完剩餘 3 份報告
+
+| 報告 | commit | findings |
+|---|---|---|
+| part 3（2025-05-01） | — | Info 2（`DelegationMetaSwapAdapter` 修復複審） |
+| part 4（2025-05-07） | — | Info 2（`LogicalOrWrapperEnforcer`） |
+| TotalBalanceEnforcer（2025-09-01） | `3ddf4f7` | **High 1**、Low 1、Info 3 |
+
+part 3／4 是小範圍複審，價值有限。**TotalBalanceEnforcer 的 High 才是這一輪的重點**，且它揭露了 L1-L18 全部照不到的一整類盲區。
+
+### L19 的來源：模組單獨正確、組合後失效
+
+`TotalBalanceEnforcer` 的 `afterAllHook`：
+
+```solidity
+BalanceTracker memory balanceTracker_ = balanceTracker[hashKey_];
+// @audit this returns early
+if (balanceTracker_.expectedIncrease == 0 && balanceTracker_.expectedDecrease == 0) return;
+// ... validation logic that gets bypassed ...
+delete balanceTracker[hashKey_];   // Cleanup after validation
+```
+
+多個 enforcer 共用同一個 `balanceTracker`。第一個 enforcer 驗證完就 `delete` 清空，於是**排在狀態修改型 enforcer（如 `NativeTokenPaymentEnforcer`，它會在 `afterAllHook` 期間轉出 ETH）之後的 enforcer 讀到空值、命中提前返回，整段驗證被靜默跳過**，餘額限制形同不存在。
+
+攻擊組合是一條混合型委派鏈：`TotalBalanceChangeEnforcer` → `NativeTokenPaymentEnforcer` → `TotalBalanceChangeEnforcer`，最後那個永遠不會真的驗證。
+
+part 4 的 I-2（`LogicalOrWrapperEnforcer` 的分支由**被授權方**自行挑選，可選出限制最寬鬆的一組）屬於同一類。
+
+**為什麼 L1-L18 全部漏掉**：既有 19 條中的前 18 條，隱含前提都是「檢查寫在單一合約的單一函式裡」，查證方式也都是逐函式讀實作。而這個缺陷不存在於任何單一模組內——每個 enforcer 拆開看都正確——它存在於**模組之間的狀態耦合與執行順序**。逐檔審計結構上就看不到它。
+
+L19 因此把查證單位從「函式」提升到「模組配對」：共用可變狀態誰清理、提前返回會不會被當成通過、組合順序由誰決定。
+
+## 全部五份報告總計
+
+| 報告 | findings | 庫命中 |
+|---|---|---|
+| part 1 | 13 | 0（當時庫尚無 L17／L18） |
+| part 2 | 10 | 1（L17，非循環驗證） |
+| part 3 | 2 | 0 |
+| part 4 | 2 | 0（歸納出 L19） |
+| TotalBalanceEnforcer | 5 | 0（歸納出 L19） |
+| **合計** | **32** | **1** |
+
+情境庫由 13 條成長到 19 條，其中 6 條（L14-L19）由這兩次回測歸納而來。
+
 ## 目前結論
 
 - 「工具對 KMS 領域無效」在**第一輪的狀態下成立**，根因是領域知識未入庫、通用情境偏 DeFi 形狀。
