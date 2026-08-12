@@ -77,11 +77,19 @@ def main() -> None:
         build_cmd += ["--classification", args.classification]
     if args.env:
         build_cmd += ["--env", args.env]
+    # build_report.py draws the severity chart, whose CJK labels need the same
+    # font the PDF body gets. It has no --font flag of its own and resolves
+    # fonts via find_cjk_font(), which reads $SECURITY_SCAN_CJK_FONT first —
+    # so forward --font that way rather than only handing it to md_to_pdf.py,
+    # otherwise --font silently fixes the text and leaves the chart as tofu.
+    build_env = dict(os.environ)
+    if args.font:
+        build_env["SECURITY_SCAN_CJK_FONT"] = args.font
     # build_report.py's exit code carries the delivery-gate verdict (0 = Tier
     # 1/2 deliverable, 3/4 = internal-only report, 2 = validation error, see
     # its docstring). Tier 3/4 still produce a (watermarked) report + PDF for
     # internal tracking, so only a validation error aborts here.
-    gate_code = subprocess.run(build_cmd).returncode
+    gate_code = subprocess.run(build_cmd, env=build_env).returncode
     if gate_code not in (0, 3, 4):
         raise SystemExit(gate_code)
 
