@@ -11,6 +11,14 @@ Detectors with an empty `elements` list (observed: unindexed-event-address)
 fall back to parsing the file path out of the description text — see
 _fallback_location().
 """
+# Keeps annotations unevaluated so the PEP 604 `dict | None` below doesn't
+# raise TypeError at import time on Python 3.9 — which is the system python
+# on macOS, and the one report.py's interpreter probe picks first when it has
+# fpdf2 + matplotlib installed. This one line is all that stands between the
+# pipeline and running on 3.9; without it the probe selects an interpreter
+# that then dies importing this module.
+from __future__ import annotations
+
 import argparse
 import json
 import re
