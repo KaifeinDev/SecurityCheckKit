@@ -228,6 +228,96 @@ COVER_TITLE_RE = re.compile(r"^#\s+(.+)$")
 COVER_TOOL_RE = re.compile(r"^\*\*檢測工具\*\*[:：]\s*(.+)$")
 COVER_DATE_RE = re.compile(r"^\*\*檢測日期\*\*[:：]\s*(.+)$")
 
+# Running header/footer assets (BSOS 文件規格設計系統 v1.0 — brand logo lockup,
+# §1.4/1.5 gradient accent built from the cover's own Sky 300/Lime 400/Violet
+# 500 stops). Both are optional: missing either just degrades to no logo /
+# no gradient bar rather than failing the build.
+LOGO_HEADER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "bsos_logo_header.png")
+GRADIENT_BAR_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "gradient_bar.png")
+HEADER_META_GRAY = (138, 147, 161)  # slate gray sampled from the designer's report_BSOS.pdf mockup header/footer
+
+
+class ReportPDF(FPDF):
+    """Adds a running page header (logo + gradient rule + title/tool/date
+    breadcrumb) and footer (rule + internal-version notice or page number) to
+    every page except the cover, matching the designer's report_BSOS.pdf
+    mockup. Attributes are set by build_pdf() right after construction, before
+    any add_page() call, since header()/footer() fire automatically inside
+    add_page()/close()."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cover_rendered = False
+        self.report_title = ""
+        self.report_tool = ""
+        self.report_date = ""
+        self.is_internal = False
+
+    def _on_cover_page(self) -> bool:
+        return self.cover_rendered and self.page_no() == 1
+
+    def header(self):
+        if self._on_cover_page():
+            return
+        margin_l, margin_r = self.l_margin, self.r_margin
+        content_w = self.w - margin_l - margin_r
+
+        logo_h = 5.5
+        logo_y = 8
+        if os.path.isfile(LOGO_HEADER_PATH):
+            self.image(LOGO_HEADER_PATH, x=margin_l, y=logo_y, h=logo_h)
+
+        bar_y = logo_y + logo_h + 2.2
+        bar_h = 0.9
+        if os.path.isfile(GRADIENT_BAR_PATH):
+            self.image(GRADIENT_BAR_PATH, x=margin_l, y=bar_y, w=content_w, h=bar_h)
+
+        row_y = bar_y + bar_h + 2.6
+        self.set_xy(margin_l, row_y)
+        self.set_font("Body", "B", 11)
+        self.set_text_color(*COLOR_HEADING)
+        self.cell(content_w * 0.6, 6, self.report_title, align="L")
+        meta = [p for p in (
+            f"檢測工具：{self.report_tool}" if self.report_tool else "",
+            f"檢測日期：{self.report_date}" if self.report_date else "",
+        ) if p]
+        if meta:
+            self.set_xy(margin_l, row_y)
+            self.set_font("Body", "", 8.5)
+            self.set_text_color(*HEADER_META_GRAY)
+            self.cell(content_w, 6, "   |   ".join(meta), align="R")
+
+        rule_y = row_y + 7.5
+        self.set_draw_color(*GRAY_300)
+        self.set_line_width(0.2)
+        self.line(margin_l, rule_y, self.w - margin_r, rule_y)
+        self.set_draw_color(0, 0, 0)
+        self.set_line_width(0.2)
+        self.set_text_color(*COLOR_DEFAULT)
+        self.set_y(rule_y + 4)
+
+    def footer(self):
+        if self._on_cover_page():
+            return
+        margin_l, margin_r = self.l_margin, self.r_margin
+        y = self.h - 15
+        self.set_draw_color(*GRAY_300)
+        self.set_line_width(0.2)
+        self.line(margin_l, y, self.w - margin_r, y)
+        self.set_draw_color(0, 0, 0)
+        self.set_line_width(0.2)
+        self.set_y(y + 2)
+        self.set_font("Body", "", 8.5)
+        self.set_text_color(*HEADER_META_GRAY)
+        if self.is_internal:
+            self.cell(0, 5, "內部工作版本 — 不可作為交付文件", align="L")
+        else:
+            self.set_x(margin_l)
+            self.cell(self.w - margin_l - margin_r - 25, 5, self.report_title, align="L")
+            self.set_x(self.w - margin_r - 25)
+            self.cell(25, 5, f"第 {self.page_no()} / {{nb}} 頁", align="R")
+        self.set_text_color(*COLOR_DEFAULT)
+
 
 def render_cover_page(pdf, tool_value: str, date_value: str) -> None:
     pdf.add_page()
@@ -277,7 +367,7 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
     # CJK fonts typically have no glyph for \t, and fpdf2 warns per character.
     lines = [EMOJI_PATTERN.sub("", line).replace("\t", " ").rstrip() for line in raw_lines]
 
-    pdf = FPDF()
+    pdf = ReportPDF()
     # We never author intentional __underline__ spans in report content, and
     # source text legitimately contains literal "--" (CLI flags like
     # `--rpc-url` quoted in a finding's 說明). fpdf2 treats "--" as its
@@ -289,40 +379,48 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
     pdf.add_font("Body", "", font_path)
     pdf.add_font("Body", "B", bold_font_path or font_path)
 
-    # The cover page's title/tool/date come straight out of the report's own
-    # first lines (single source of truth) rather than being passed in
-    # separately. If found and the bundled asset is present, render a cover
-    # and drop those exact lines from the normal body flow so they don't
-    # also print again as the first thing on page 2.
-    skip_line_indices = set()
-    if os.path.isfile(COVER_TEMPLATE_PATH):
-        title_idx = tool_idx = date_idx = None
-        tool_value = date_value = None
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if title_idx is None and COVER_TITLE_RE.match(stripped):
-                title_idx = i
-            m_tool = COVER_TOOL_RE.match(stripped)
-            m_date = COVER_DATE_RE.match(stripped)
-            if m_tool and tool_value is None:
-                tool_value, tool_idx = m_tool.group(1), i
-            if m_date and date_value is None:
-                date_value, date_idx = m_date.group(1), i
-            if None not in (title_idx, tool_value, date_value):
-                break
+    # The cover page's / running header's title/tool/date come straight out
+    # of the report's own first lines (single source of truth) rather than
+    # being passed in separately. Extracted unconditionally so the running
+    # header (every page) has them even when the cover asset is missing;
+    # the cover render itself, and dropping these exact lines from the
+    # normal body flow, still only happens when the bundled asset exists.
+    title_idx = tool_idx = date_idx = None
+    title_value = tool_value = date_value = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if title_idx is None:
+            m_title = COVER_TITLE_RE.match(stripped)
+            if m_title:
+                title_value, title_idx = m_title.group(1), i
+        m_tool = COVER_TOOL_RE.match(stripped)
+        m_date = COVER_DATE_RE.match(stripped)
+        if m_tool and tool_value is None:
+            tool_value, tool_idx = m_tool.group(1), i
+        if m_date and date_value is None:
+            date_value, date_idx = m_date.group(1), i
         if None not in (title_idx, tool_value, date_value):
-            render_cover_page(pdf, tool_value, date_value)
-            skip_line_indices = {title_idx, tool_idx, date_idx}
-            # Also absorb the blank lines and the "---" divider right after
-            # the metadata block (report.md always has one there, closing
-            # off the title/tool/date header) so page 2 doesn't open on a
-            # stray empty gap + orphaned horizontal rule.
-            j = max(skip_line_indices) + 1
-            while j < len(lines) and lines[j].strip() == "":
-                skip_line_indices.add(j)
-                j += 1
-            if j < len(lines) and lines[j].strip() == "---":
-                skip_line_indices.add(j)
+            break
+    pdf.report_title = title_value or ""
+    pdf.report_tool = tool_value or ""
+    pdf.report_date = date_value or ""
+    pdf.is_internal = any(BANNER_RE.match(line.strip()) for line in lines)
+
+    skip_line_indices = set()
+    if os.path.isfile(COVER_TEMPLATE_PATH) and None not in (title_idx, tool_value, date_value):
+        render_cover_page(pdf, tool_value, date_value)
+        pdf.cover_rendered = True
+        skip_line_indices = {title_idx, tool_idx, date_idx}
+        # Also absorb the blank lines and the "---" divider right after
+        # the metadata block (report.md always has one there, closing
+        # off the title/tool/date header) so page 2 doesn't open on a
+        # stray empty gap + orphaned horizontal rule.
+        j = max(skip_line_indices) + 1
+        while j < len(lines) and lines[j].strip() == "":
+            skip_line_indices.add(j)
+            j += 1
+        if j < len(lines) and lines[j].strip() == "---":
+            skip_line_indices.add(j)
     pdf.add_page()
     pdf.set_font("Body", "", 11)
 
