@@ -252,8 +252,16 @@ def make_chart(before_counts, after_counts, out_path):
     ax.set_xticks(list(x))
     ax.set_xticklabels(labels)
     ax.set_ylabel("發現數量")
-    ax.set_title("各嚴重度發現數量：工具原始輸出 vs 交付版掃描結果")
-    ax.legend()
+    ax.set_title("各嚴重度發現數量：工具原始輸出 vs 交付版掃描結果", loc="left")
+    # 依 §2 圖表規範：不加外框陰影，只保留淺色水平格線與中性灰軸線，圖例不加框。
+    ax.legend(frameon=False)
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(True, color="#E4E4E7", linewidth=0.8)  # Gray 200
+    ax.xaxis.grid(False)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color("#A1A1AA")  # Gray 400
+    ax.tick_params(axis="both", length=0, colors="#52525B")  # Gray 600
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
