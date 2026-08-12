@@ -1,0 +1,95 @@
+# 回測：MetaMask Delegation Framework（KMS／金鑰管理與委派授權）vs Cyfrin
+
+**執行日期**：2026-08-12
+**目的**：以 KMS 領域（帳戶抽象、委派授權、簽章驗證）的公開審計報告回測工具能力，找出情境庫缺口。
+
+## 標的
+
+| 項目 | 內容 |
+|---|---|
+| 專案 | MetaMask DeleGator／Delegation Framework（ERC-4337 帳戶抽象上的階層式權限委派） |
+| 原始碼 | [github.com/MetaMask/delegation-framework](https://github.com/MetaMask/delegation-framework) @ `d522a38b0b0f1c27d896790262302a52c3720e06` |
+| 對照報告 | [Cyfrin Delegation Framework Audit part 1 v2.0](https://github.com/Cyfrin/cyfrin-audit-reports/blob/main/reports/2025-03-18-cyfrin-Metamask-DelegationFramework1-v2.0.pdf)（2025-03-18，11 天，13 findings） |
+| Cyfrin findings | **High 1**、Medium 2、Low 5、Informational 4、Gas 1 |
+
+選此標的的理由：涵蓋 HybridDeleGator（EOA + P256/WebAuthn passkey）、MultiSigDeleGator（門檻簽章）、EIP-7702 無狀態委派、以及 20+ 個 caveat enforcer，正是「誰能動資產、授權怎麼授出與收回」的合約層邏輯。且**有 High**，比 RWA 那次（0 High/Medium）更能測出能力。
+
+**公開資料**：公開 repo、公開報告，不受 `domain_incidents/README.md` 去識別化限制。
+
+## 環境
+
+Foundry 專案，走標準路徑，**Step 0 一次通過**（對照 Matrixdock 的 Hardhat 需繞過）：
+
+```bash
+git submodule update --init --recursive --depth 1   # lib/ 有 8 個 submodule
+python3 <kit>/scripts/cli.py check --src-prefix src/
+# [build-system] foundry / [forge build] OK / OZ 5.0.2 / solc 0.8.24 / slither 0.11.4
+```
+
+## 掃描結果
+
+Slither 對 `src/` 產出 **252 筆**（High 2、Medium 14、Low 20、Informational 216）。
+風格預分類吃掉 209 筆（naming-convention 207、unindexed-event-address 2），**實際需人工判斷 43 筆**。
+
+降噪效果比 RWA 那次好很多（217 → 43），因為這個 codebase 沒有 mock 目錄，且 naming-convention 佔比更集中。
+
+## 逐條比對
+
+| Cyfrin | 內容 | Slither 層 | 情境庫層 |
+|---|---|---|---|
+| **H-1** | EntryPoint 未納入 userOp 雜湊，可跨 EntryPoint 重放 | ❌ | ❌ **缺口** → 新增 **L18** |
+| M-1 | Transfer Amount enforcer 未檢查實際轉帳就增加額度 | ❌ | ❌ **缺口** → 新增 **L17** |
+| M-2 | Allowed 系 enforcer 重複項目造成 gas griefing | ❌ | 未涵蓋 |
+| L-1 | EIP7702StatelessDeleGator 不符 EIP-4337 簽章驗證規範 | ❌ | 未涵蓋（規範遵循類） |
+| L-2 | AllowedCalldataEnforcer 無法驗證空 calldata，擋掉 receive() | ❌ | 未涵蓋 |
+| L-3 | ERC721TransferEnforcer 導致 safe transfer revert | ❌ | 未涵蓋 |
+| L-4 | IdEnforcer::beforeHook() 事件參數錯置 | ❌ | 未涵蓋 |
+| L-5 | TimestampEnforcer 時間範圍驗證不一致 | ❌ | 未涵蓋 |
+| I-1〜I-4、G-1 | 資訊類與 gas | ❌ | — |
+
+**Slither 層 13 筆命中 0。** 比 RWA 那次（命中 1 筆 gas 建議）更差——這個 codebase 是精心設計的權限框架，Slither 的模式比對完全使不上力。
+
+### 一個差點誤判成命中的地方
+
+Slither 的 `unused-return` 有 14 筆，其中 3 筆正好落在 M-1 所指的 `ERC20TransferAmountEnforcer._validateAndIncrease`、`NativeTokenTransferAmountEnforcer.beforeHook` 上。讀完描述才確認**兩者無關**：Slither 報的是 `(target_, , callData_) = _executionCallData.decodeSingle()` 這種**解構時丟棄欄位**，屬良性風格問題；M-1 講的是額度記帳與實際轉帳脫鉤。若只憑「檔名與函式名對得上」就宣稱命中，會得出完全錯誤的回測結論。
+
+## 情境庫擴充（皆經原始碼確認）
+
+### L17 記帳依「意圖」而非「實際結果」，且失敗不回滾
+
+來源 Cyfrin **M-1**。`ERC20TransferAmountEnforcer._validateAndIncrease`（`src/enforcers/ERC20TransferAmountEnforcer.sol:76-97`）在 `beforeHook` 階段就以 calldata 的意圖值累加 `spentMap`：
+
+```solidity
+spent_ = spentMap[msg.sender][_delegationHash] += uint256(bytes32(callData_[36:68]));
+require(spent_ <= limit_, "ERC20TransferAmountEnforcer:allowance-exceeded");
+```
+
+在 `EXECTYPE_TRY` 模式下轉帳失敗不會 revert，額度照樣被扣。惡意 delegate 可反覆送出注定失敗的轉帳，把 delegator 的額度耗盡而一毛錢都沒轉出。
+
+**既有情境為何抓不到**：L9（記帳順序錯誤）的情境比對要求「**同一函式內**既更新記帳又移轉資產」。這裡記帳在 enforcer、轉帳由 DelegationManager 之後執行，enforcer 根本不碰資產，前置條件不成立就被跳過了。這是兩段式判定的正確行為——問題在情境本身的涵蓋面，不在判定流程。
+
+### L18 簽章雜湊未涵蓋全部應綁定的上下文
+
+來源 Cyfrin **H-1**。`getPackedUserOperationHash` 未把 EntryPoint 位址納入雜湊，同一份已簽 userOp 可在另一個 EntryPoint 上重放。MetaMask 已於 commit `1f91637` 修復。
+
+**既有情境為何抓不到**：L1-L16 完全沒有觸及「簽章雜湊該綁定哪些上下文」這個面向。這類問題（EIP-712 domain separator 涵蓋不足、跨實例／跨鏈重放）是簽章驗證系統的常見缺口，且 KMS／AA 領域幾乎必然涉及。
+
+## 觀察
+
+1. **靜態分析器對權限框架幾乎無效**：兩次回測合計 30 筆第三方發現，Slither 精準命中 1 筆（且是 gas 建議）。這不是安裝或設定問題——Slither 找的是程式碼形狀，而審計公司找的是「這個授權模型在什麼情況下會被繞過」。
+2. **情境庫是唯一有效的一層，但需要持續擴充**：這次兩條 Medium/High 都落在既有 18 條之外，補完後才涵蓋。兩次回測共長出 5 條情境（L14-L18）。
+3. **降噪參數在乾淨 codebase 上效果更好**：252 筆 → 43 筆需人工判斷（83% 降幅）。
+
+## 待辦
+
+Step 2（43 筆分類 + 全庫情境比對）與 Step 4（產報告）尚未執行，本文件僅涵蓋掃描與逐條比對。
+
+## 可重現步驟
+
+```bash
+git clone https://github.com/MetaMask/delegation-framework.git && cd delegation-framework
+git checkout d522a38b0b0f1c27d896790262302a52c3720e06
+git submodule update --init --recursive --depth 1
+python3 <kit>/scripts/cli.py check --src-prefix src/
+python3 <kit>/scripts/cli.py scan --out-dir /tmp/bench-mm --src-prefix src/
+```
