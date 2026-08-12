@@ -76,11 +76,16 @@ Cyfrin 的範圍只有 4 個 messager 檔，以下都**在其宣告範圍之外*
 
 同時修掉一個維護性缺陷：條目欄位原本叫 `對照 L1-L13`，情境每次增補都會讓這個標籤與所有既有條目、以及維護 skill 的驗證 grep 一起過期。已改為版本中立的 **`對照通用情境`**，並把 `logic_scan.md`／`SKILL.md` 中殘留的 `L1-L10`、「十條情境」等過期表述一併更新（其中 `L1-L10` 早在 L11-L13 加入時就已過期，屬既有漂移）。
 
-## 對工具本身的觀察（尚未處理）
+## 對工具本身的觀察（本次回測順帶修掉）
 
-1. **Step 0 綁死 Foundry**：公開審計標的多為 Hardhat。既然 `scan` 本身與建置系統無關，`cli.py check` 可考慮支援 Hardhat／Foundry 雙路徑，否則每次回測都要手動繞過 Step 0。
-2. **訊噪比**：443 筆自有發現對上第三方 17 筆，其中 179 筆是 `naming-convention`。Step 2 人工分類要處理這個量體並不現實，或許值得考慮預設過濾（例如把 naming-convention／unindexed-event-address 這類純風格檢查另立一區，不進主分類流程）。
-3. **`fake/` 測試樁污染結果**：`locked-ether` 兩筆全來自 `contracts/fake/`。`--src-prefix` 只能框到目錄層級，無法排除專案內的 mock；可考慮加一個排除樣式參數。
+這三個問題都是被這次回測逼出來的，已於同日修正並以本次資料驗證：
+
+1. **Step 0 綁死 Foundry** → `env_check.py` 新增 `detect_build_system()`，Foundry／Hardhat 雙路徑。`scan` 本來就與建置系統無關（crytic-compile 自行驅動建置），只有 Step 0 擋著。Hardhat 走 `npx hardhat compile`，並針對實測踩到的兩個坑給出提示：config 要求環境變數金鑰（編譯用 dummy 即可）、peer dependency 衝突（`--legacy-peer-deps`）。驗證：本專案 `cli.py check` 由「直接失敗」變為通過，Foundry fixture 回歸測試不受影響。
+2. **訊噪比 443:17** → 新增預設開啟的風格預分類，`naming-convention` 與 `unindexed-event-address` 自動預填 C 並標記 `auto_classified: "style"`（仍留在報告中，可用 `--no-auto-style` 關閉）。名單刻意保守，只收絕不可能代表安全問題的檢查器。
+3. **`fake/` 測試樁污染** → `filter_results.py`／`scan.py` 新增 `--exclude-path`，可排除位於 `--src-prefix` 內部的 mock 目錄；排除優先於納入，避免 mock 與真合約同框時把真合約一起帶進來。
+
+**綜合效果（本專案實測）**：443 筆 →（排除 `contracts/fake/`）419 筆 →（風格預分類 202 筆）**實際需人工判斷 217 筆，降幅 51%**。
+**安全性回歸**：`test-fixtures/vulnerable-vault` 中刻意植入的 5 筆 High/Medium（`weak-prng`、`reentrancy-eth`、`suicidal`、`tx-origin`、`unchecked-lowlevel`）全部維持未分類、等待人工判斷，無任何一筆被自動預分類吃掉。
 
 ## 可重現步驟
 

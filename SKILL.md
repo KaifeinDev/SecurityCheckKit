@@ -27,9 +27,11 @@ Step 0/1/4（環境健檢、掃描、產報告）背後都是呼叫 `scripts/cli
 python3 .claude/skills/security-scan/scripts/cli.py check --src-prefix src/
 ```
 
-這個指令會自動做：檢查 `foundry.toml` 的 `src` 設定、跑一次 `forge build`、掃描合約原始碼判斷是 OpenZeppelin v4 還是 v5 API 特徵（衝突時直接列出衝突點，不會自己猜版本）、蒐集 solc/slither/forge 版本。**exit code 0 代表環境已就緒，直接跳到 Step 1**；非 0 代表以下某項需要處理，對照輸出訊息排除：
+這個指令會自動做：**偵測建置系統（Foundry 或 Hardhat）**、確認專案編譯得起來、掃描合約原始碼判斷是 OpenZeppelin v4 還是 v5 API 特徵（衝突時直接列出衝突點，不會自己猜版本）、蒐集 solc/slither/forge 版本。**exit code 0 代表環境已就緒，直接跳到 Step 1**；非 0 代表以下某項需要處理，對照輸出訊息排除：
 
-1. `[foundry.toml] not found`：專案還沒有 Foundry 骨架：
+**關於建置系統**：`[build-system]` 那行會印出 `foundry`、`hardhat` 或 `none detected`。兩者皆可掃描——slither 的 crytic-compile 會自行驅動建置，Step 1 完全不管專案用哪一套。差別只在這個 Step 0 怎麼驗證「編譯得起來」：Foundry 走 `forge build`，Hardhat 走 `npx hardhat compile`。**外部專案（審計標的、回測樣本）多半是 Hardhat，這是正常情況，不需要改建成 Foundry。** Hardhat 專案常見兩個卡點，check 會直接給出對應提示：config 從環境變數讀部署金鑰而拒絕載入（編譯不需要真金鑰，用 dummy 值即可），以及 peer dependency 衝突（`npm install --legacy-peer-deps`）。Hardhat 專案的 `--src-prefix` 通常是 `contracts/` 而非 `src/`。
+
+1. `[foundry.toml] not found`（且未偵測到 Hardhat）：專案還沒有任何建置骨架：
    - `forge init --no-git --force .`
    - 刪除預設範例檔（`src/Counter.sol`、`test/Counter.t.sol`、`script/Counter.s.sol`、`README.md`）
    - 確認 `foundry.toml` 的 `src = "src"`（**絕對不能是 `"."`**，見 `pitfalls.md` #1）
@@ -51,6 +53,11 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 ```
 
 （帶 `--full-audit` 則連 `lib/` 底下相依套件的發現也一併保留，不過濾。）
+
+**兩個降噪參數**（實測 443 筆的專案套用後只剩 217 筆需要人工判斷）：
+
+- **`--exclude-path <前綴>`**（可重複）：排除**位於 `--src-prefix` 內部**的 mock／測試樁目錄，例如 `--exclude-path contracts/fake/`。`--src-prefix` 只能框到來源根目錄，框不掉根目錄裡面的假合約；那些合約永遠不會部署，它們的發現卻會跟真合約的發現搶同一份人工注意力。排除優先於納入：只要發現碰到的任何一個檔案落在排除路徑，整筆就會被丟掉。`--full-audit` 也照樣套用此參數。
+- **預設開啟的風格預分類**：`naming-convention` 與 `unindexed-event-address` 這兩個純風格檢查會被自動預填 `category: "C"`、附上理由，並標記 `auto_classified: "style"`。它們**仍然留在報告裡**（數字與重掃仍可對帳），只是不必逐筆人工判。要關掉用 `--no-auto-style`。這份名單刻意保守——只收「絕不可能代表安全問題」的檢查器；`solc-version`、`pragma`、`unused-state` 這類有爭議的一律不收，仍交人工判斷。
 
 **重掃時（同一專案之前已做過 Step 2）加上 `--prev-classification <上次的 classification.json>`**：skeleton 會把「跟上次同一筆」的發現（check + file + 起始行號一致；行號位移時退而用 check + file 唯一比對）自動沿用上次的 category/dev_note 並標記 `carried_from_previous`，只有新出現的發現留空待分類；上次的 manual_findings 也會原樣帶入。CLI 會列出「上次有、這次沒有」的已解決清單。
 
@@ -115,6 +122,8 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 **選填的 `status` 欄位（修復進度追蹤，跟 `category` 是兩件事）**：`findings[]`／`manual_findings[]` 的每一筆都可以額外加一個 `status` 欄位，記錄目前的修復／處置進度（例如 `"待處理"`、`"已修復"`、`"已確認接受風險"`），跟 `category`（這是不是問題、算哪一類）是正交的兩個維度——`category` 定案後通常不會再變，`status` 會隨著專案團隊的修復進度持續更新。此欄位為選填、不驗證固定字典，缺省時報告顯示「待處理」。只有 `category=A` 的掃描發現與**全部** `manual_findings`（依規則永遠不是 C 類，見上方 category 限制）才會進入報告新增的「待決策／待處理項目總表」（B/C 類是永久性判定，沒有「修復進度」這個概念，不適用 `status`）。等專案開始修復後，重跑報告時把對應項目的 `status` 更新掉，總表跟逐筆明細會一起反映最新進度，不需要另外開新文件追蹤。
 
 掃描結果裡的**每一筆**發現都要分類：Step 4 會把 classification.json 跟掃描結果逐筆核對，漏掉的一律視同 D（待確認），未分類的 High 直接把等級打成第四級。
+
+**風格預分類（`auto_classified: "style"`）的複核義務**：skeleton 裡標了這個欄位的項目已由 scan 預填為 C，可視為已分類，但列給使用者時要**明講有幾筆被自動判為 C、是哪些檢查器**，不能默默略過——使用者有權知道哪些發現不是人判的。若使用者認為某筆有安全含義，清空 `category` 與 `auto_classified` 後重新判定。
 
 **重掃沿用（`--prev-classification`）的複核義務**：skeleton 裡標 `carried_from_previous: "exact"` 的項目可視為已分類，但列給使用者時要註明是沿用；標 `"fallback"` 的（行號位移、用 check+file 對上的）必須逐筆重讀確認沒對錯行；帶入的 manual_findings（標 `"manual"`）不隨掃描結果失效，要逐筆重新確認仍然成立，已修復的直接刪除。
 

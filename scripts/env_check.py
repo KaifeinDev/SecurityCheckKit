@@ -56,6 +56,44 @@ def run(cmd, cwd):
         return False, f"timed out: {' '.join(cmd)}"
 
 
+HARDHAT_CONFIGS = ("hardhat.config.ts", "hardhat.config.js", "hardhat.config.cjs", "hardhat.config.mjs")
+
+
+def detect_build_system(project_dir):
+    """Which build system does this project use?
+
+    Slither's crytic-compile auto-detects the build system, so `scan` works on
+    Hardhat projects unchanged — only this pre-flight check ever hard-required
+    Foundry. Most third-party codebases (audit targets, benchmark subjects) are
+    Hardhat, so refusing them here blocked the scan for no technical reason.
+    Foundry wins when both are present: that is the layout the rest of the kit
+    and pitfalls.md are written against.
+    """
+    if os.path.isfile(os.path.join(project_dir, "foundry.toml")):
+        return "foundry"
+    for name in HARDHAT_CONFIGS:
+        if os.path.isfile(os.path.join(project_dir, name)):
+            return "hardhat"
+    return None
+
+
+def check_hardhat_build(project_dir):
+    ok, output = run(["npx", "hardhat", "compile"], project_dir)
+    if ok:
+        return {"ok": True, "detail": "npx hardhat compile succeeded"}
+    hint = ""
+    if "Invalid account" in output or "HH8" in output:
+        hint = (
+            "\nHint: hardhat.config reads deployment keys from env vars and refuses to load "
+            "without them. Compilation does not need real keys — re-run with dummies, e.g.\n"
+            "  KEY=0x0000000000000000000000000000000000000000000000000000000000000001 "
+            "ETHSCAN_KEY=dummy BSCSCAN_KEY=dummy"
+        )
+    elif "ERESOLVE" in output or "peer dep" in output:
+        hint = "\nHint: peer-dependency conflict — try `npm install --legacy-peer-deps`."
+    return {"ok": False, "detail": output[-3000:] + hint}
+
+
 def check_foundry_toml(project_dir):
     path = os.path.join(project_dir, "foundry.toml")
     if not os.path.isfile(path):
@@ -191,28 +229,50 @@ def main() -> None:
     src_prefixes = args.src_prefix or ["src/"]
     project_dir = args.project_dir
 
+    build_system = detect_build_system(project_dir)
     result = {
-        "foundry_toml": check_foundry_toml(project_dir),
+        "build_system": build_system,
+        "foundry_toml": None,
         "forge_build": None,
         "oz_version_signatures": detect_oz_version_signatures(project_dir, src_prefixes),
         "env": gather_scan_env(project_dir),
     }
 
     needs_human = False
+    print(f"[build-system] {build_system or 'none detected'}")
 
-    print(f"[foundry.toml] {result['foundry_toml']['detail']}")
-    if not result["foundry_toml"]["ok"]:
-        needs_human = True
-
-    if result["foundry_toml"]["ok"]:
-        result["forge_build"] = check_forge_build(project_dir)
+    if build_system == "foundry":
+        result["foundry_toml"] = check_foundry_toml(project_dir)
+        print(f"[foundry.toml] {result['foundry_toml']['detail']}")
+        if not result["foundry_toml"]["ok"]:
+            needs_human = True
+            print("[forge build] skipped (fix foundry.toml first)")
+        else:
+            result["forge_build"] = check_forge_build(project_dir)
+            status = "OK" if result["forge_build"]["ok"] else "FAILED"
+            print(f"[forge build] {status}")
+            if not result["forge_build"]["ok"]:
+                print(result["forge_build"]["detail"])
+                needs_human = True
+    elif build_system == "hardhat":
+        result["forge_build"] = check_hardhat_build(project_dir)
         status = "OK" if result["forge_build"]["ok"] else "FAILED"
-        print(f"[forge build] {status}")
+        print(f"[hardhat compile] {status}")
         if not result["forge_build"]["ok"]:
             print(result["forge_build"]["detail"])
             needs_human = True
+        else:
+            print(
+                "[note] Hardhat project: slither/crytic-compile drives the build itself, so "
+                "`scan` works as-is. Pass the real source root, e.g. --src-prefix contracts/"
+            )
     else:
-        print("[forge build] skipped (fix foundry.toml first)")
+        needs_human = True
+        print(
+            "[build-system] neither foundry.toml nor hardhat.config.* found — the project has no "
+            "recognised build setup. Run `forge init` (see SKILL.md Step 0), or point --project-dir "
+            "at the directory that actually holds the build config."
+        )
 
     # Surface the actually-installed OZ package version(s) first — this is
     # ground truth when available (read from lib/*/package.json) and should

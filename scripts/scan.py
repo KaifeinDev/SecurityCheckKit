@@ -34,18 +34,46 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from env_check import gather_scan_env  # noqa: E402
-from filter_results import extract_findings, is_own_finding, _fallback_location  # noqa: E402
+from filter_results import extract_findings, is_own_finding, is_excluded, _fallback_location  # noqa: E402
 
 
-def build_classification_skeleton(before_json):
+# Detectors that report code-style/readability observations rather than
+# anything that can become a vulnerability. These dominate raw output by
+# volume — a real benchmark run produced 443 own-code findings of which 179
+# were naming-convention alone — and hand-classifying them one by one crowds
+# out attention that belongs on the findings that matter.
+#
+# They are pre-classified as C rather than dropped: they still appear in the
+# report, so the numbers stay reconcilable against a re-scan, and the
+# `auto_classified` marker tells Step 2 exactly what was decided by machine.
+# Keep this list conservative — a detector belongs here only if it can NEVER
+# indicate a security problem. Anything arguable (solc-version, pragma,
+# unused-state) stays out and gets human judgement.
+STYLE_ONLY_CHECKS = {
+    "naming-convention",
+    "unindexed-event-address",
+}
+
+STYLE_DEV_NOTE = (
+    "純命名/事件索引等風格檢查（{check}），不構成安全性問題，由 scan 依 STYLE_ONLY_CHECKS "
+    "自動預分類為 C。如認為此筆有安全含義，清空 category 與 auto_classified 後重新判定。"
+)
+
+
+def build_classification_skeleton(before_json, auto_style=True):
     """Prefill classification.json's findings[] straight from the scan output,
     leaving only the two human fields (category, dev_note) empty. Lines are
     collapsed to [min, max] — the same shape the reconciliation in
-    build_report.py fingerprints on."""
+    build_report.py fingerprints on.
+
+    With `auto_style` (default), findings whose check is in STYLE_ONLY_CHECKS
+    are additionally pre-filled as category C with a stated reason, mirroring
+    how carry_over_classifications() prefills from a previous run: the human
+    reviews a marked decision instead of making it from scratch."""
     skeleton_findings = []
     for i, f in enumerate(extract_findings(before_json), start=1):
         lines = f["lines"]
-        skeleton_findings.append({
+        entry = {
             "id": i,
             "check": f["check"],
             "impact": f["impact"],
@@ -54,7 +82,12 @@ def build_classification_skeleton(before_json):
             "description": f["description"].replace("\n", " "),
             "category": "",
             "dev_note": "",
-        })
+        }
+        if auto_style and f["check"] in STYLE_ONLY_CHECKS:
+            entry["category"] = "C"
+            entry["dev_note"] = STYLE_DEV_NOTE.format(check=f["check"])
+            entry["auto_classified"] = "style"
+        skeleton_findings.append(entry)
     return {"findings": skeleton_findings, "manual_findings": []}
 
 
@@ -178,6 +211,19 @@ def main() -> None:
     parser.add_argument("--src-prefix", action="append", default=[], help="Repeatable. Defaults to src/.")
     parser.add_argument("--full-audit", action="store_true", help="Keep findings from lib/ dependencies too")
     parser.add_argument(
+        "--exclude-path",
+        action="append",
+        default=[],
+        help="Path prefix to drop even when inside --src-prefix, for mocks/stubs that are "
+             "never deployed (e.g. contracts/fake/). Repeatable.",
+    )
+    parser.add_argument(
+        "--no-auto-style",
+        action="store_true",
+        help="Do not pre-classify pure style findings (naming-convention, "
+             "unindexed-event-address) as C; leave every finding for manual classification.",
+    )
+    parser.add_argument(
         "--prev-classification",
         help="Path to a previous run's classification.json: findings that match "
              "(check + file + start line, with a conservative check+file fallback "
@@ -202,9 +248,11 @@ def main() -> None:
     detectors = data.get("results", {}).get("detectors", [])
 
     if args.full_audit:
-        kept = detectors
+        # --exclude-path still applies: --full-audit widens scope to dependencies,
+        # it does not mean "audit the mocks the project told us to ignore".
+        kept = [d for d in detectors if not is_excluded(d, args.exclude_path)]
     else:
-        kept = [d for d in detectors if is_own_finding(d, src_prefixes)]
+        kept = [d for d in detectors if is_own_finding(d, src_prefixes, args.exclude_path)]
 
     data["results"]["detectors"] = kept
     with open(before_path, "w", encoding="utf-8") as f:
@@ -215,7 +263,7 @@ def main() -> None:
     with open(env_path, "w", encoding="utf-8") as f:
         json.dump(env, f, ensure_ascii=False, indent=2)
 
-    skeleton = build_classification_skeleton(data)
+    skeleton = build_classification_skeleton(data, auto_style=not args.no_auto_style)
     carry_stats = None
     if args.prev_classification:
         with open(args.prev_classification, encoding="utf-8") as f:
@@ -229,8 +277,22 @@ def main() -> None:
         counts[d.get("impact", "Unknown")] = counts.get(d.get("impact", "Unknown"), 0) + 1
 
     scope = "all findings (--full-audit)" if args.full_audit else f"prefixes {src_prefixes}"
+    if args.exclude_path:
+        scope += f", excluding {args.exclude_path}"
     print(f"kept {len(kept)}/{len(detectors)} findings ({scope})")
     print("by impact:", counts)
+
+    auto_styled = [f for f in skeleton["findings"] if f.get("auto_classified") == "style"]
+    if auto_styled:
+        by_check = {}
+        for f in auto_styled:
+            by_check[f["check"]] = by_check.get(f["check"], 0) + 1
+        detail = ", ".join(f"{k} {v}" for k, v in sorted(by_check.items()))
+        print(
+            f"auto-classified as C (pure style, still in report): {len(auto_styled)} — {detail}\n"
+            f"  Step 2 needs to classify the remaining "
+            f"{len(skeleton['findings']) - len(auto_styled)}. Use --no-auto-style to disable."
+        )
     print()
     print_summary(kept)
     print()

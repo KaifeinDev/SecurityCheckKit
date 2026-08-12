@@ -76,17 +76,47 @@ def extract_findings(results_json: dict | None) -> list[dict]:
     return findings
 
 
-def is_own_finding(detector: dict, src_prefixes: list[str]) -> bool:
+def _detector_files(detector: dict) -> list[str]:
     elements = detector.get("elements", [])
-    for element in elements:
-        rel = (element.get("source_mapping", {}) or {}).get("filename_relative") or ""
-        if any(rel.startswith(prefix) for prefix in src_prefixes):
-            return True
+    files = [
+        (el.get("source_mapping", {}) or {}).get("filename_relative") or ""
+        for el in elements
+    ]
     if not elements:
         file, _ = _fallback_location(detector.get("description") or "")
         if file != "?":
-            return any(file.startswith(prefix) for prefix in src_prefixes)
-    return False
+            files = [file]
+    return [f for f in files if f]
+
+
+def is_excluded(detector: dict, exclude_paths: list[str] | None) -> bool:
+    """True when any file this finding touches sits under an excluded prefix."""
+    if not exclude_paths:
+        return False
+    return any(
+        f.startswith(ex) for f in _detector_files(detector) for ex in exclude_paths
+    )
+
+
+def is_own_finding(detector: dict, src_prefixes: list[str], exclude_paths: list[str] | None = None) -> bool:
+    """True when the finding touches the project's own source and is not excluded.
+
+    `exclude_paths` carves mock/test scaffolding back out of an otherwise
+    in-scope source root. Real case: a project keeps stubs in
+    `contracts/fake/`, and every `locked-ether` hit came from those mocks —
+    findings about code that is never deployed, competing for the same manual
+    triage attention as findings about code that is. `--src-prefix` cannot
+    express this because the stubs live *inside* the source root.
+
+    Exclusion wins over inclusion: a finding is dropped when ANY file it
+    touches is excluded, so a mock cannot drag real contracts into scope by
+    appearing alongside them in one detector.
+    """
+    if is_excluded(detector, exclude_paths):
+        return False
+    return any(
+        f.startswith(prefix) for f in _detector_files(detector) for prefix in src_prefixes
+    )
 
 
 def main() -> None:
@@ -99,13 +129,20 @@ def main() -> None:
         required=True,
         help="Path prefix (relative to project root) considered part of the project's own source. Repeatable.",
     )
+    parser.add_argument(
+        "--exclude-path",
+        action="append",
+        default=[],
+        help="Path prefix to drop even when it sits inside --src-prefix, for mocks/stubs "
+             "that are never deployed (e.g. contracts/fake/). Repeatable.",
+    )
     args = parser.parse_args()
 
     with open(args.raw_json, encoding="utf-8") as f:
         data = json.load(f)
 
     detectors = data.get("results", {}).get("detectors", [])
-    own = [d for d in detectors if is_own_finding(d, args.src_prefix)]
+    own = [d for d in detectors if is_own_finding(d, args.src_prefix, args.exclude_path)]
 
     data["results"]["detectors"] = own
     with open(args.filtered_json, "w", encoding="utf-8") as f:
