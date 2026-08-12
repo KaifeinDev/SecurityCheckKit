@@ -19,7 +19,8 @@ PR 流程，不由本 skill 執行。
 1. **只寫 `references/domain_incidents/` 底下的檔案**，不動 `logic_scan.md`、`SKILL.md`
    或任何其他檔案。
 2. **不得新建領域檔案**。領域檔的存在代表「曾有專案需要它」；沒有專案接觸過的領域不該被維護，
-   養一份沒人用的資料是純浪費。新領域檔只在專案跑規則 1 時建立。
+   養一份沒人用的資料是純浪費。新領域檔只透過來源 B（專案發現回饋）的階段 2 建立——由跑過該
+   領域首次調查的工程師在自己的一般 clone 裡建檔、開 PR，本 skill 不建立領域檔。
 3. **不得修改任何 `實戰命中摘要` 欄位**。那是來源 B 的資料，含去識別化判斷，不在本 skill
    職權內。
 4. **產出一律走 PR，不直接 commit 到 main**，理由同 README：知識庫需要第二雙眼睛。
@@ -85,13 +86,20 @@ echo "--- 五欄齊備（各欄次數應等於條目數）:"
 for f in "描述" "來源" "標準查證問題" "對照 L1-L13" "實戰命中摘要"; do
   printf "%-14s %s\n" "$f" "$(grep -cF "**$f**" references/domain_incidents/$DOMAIN.md)"
 done
-echo "--- 既有實戰命中摘要未被動到（應無輸出）:"
-git diff references/domain_incidents/$DOMAIN.md | grep "^-" | grep "實戰命中摘要"
+echo "--- 既有實戰命中摘要未被動到（tripwire，不是證明——見下方說明）:"
+git diff HEAD references/domain_incidents/$DOMAIN.md | grep "^-" | grep "實戰命中摘要"
 echo "--- last_reviewed:"
 grep "^last_reviewed:" references/domain_incidents/$DOMAIN.md
 ```
 
 任一項不符就修正後重跑，不要帶著結構錯誤開 PR。
+
+**「既有實戰命中摘要未被動到」這項 grep 只是 tripwire，不是證明**：`實戰命中摘要` 這個標籤只
+出現在每個摘要的第一行，但摘要本文通常再往下延伸 3-4 行；改動延伸行、不改第一行，這條 grep
+抓不到。`git diff HEAD` 已經涵蓋 staged 的變更，但多行的條目區塊沒有可靠的 grep 邊界能自動比對
+「整段摘要是否原封不動」。因此**維護者必須另外手動看過本次刷新觸碰到的每一條目的完整 diff**，
+逐眼確認沒有任何既有 `實戰命中摘要` 的內容被改動（包含摘要延伸的每一行），才能視為 Step 4 通過。
+grep 沒輸出不代表安全，只代表沒踩到最明顯的那種修改。
 
 ## Step 5：開 PR
 
