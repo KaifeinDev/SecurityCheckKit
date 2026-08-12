@@ -47,6 +47,14 @@ CANDIDATE_FONT_PATHS = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    # macOS: Noto Sans CJK is not bundled with the OS, so it lands in one of
+    # the user/local font dirs when installed by hand or via Homebrew cask.
+    # The TC (traditional) cut is listed first — this project's reports are
+    # zh-Hant, and 設計系統 §2.8 names Noto Sans TC as the document face.
+    os.path.expanduser("~/Library/Fonts/NotoSansCJKtc-Regular.otf"),
+    "/Library/Fonts/NotoSansCJKtc-Regular.otf",
+    os.path.expanduser("~/Library/Fonts/NotoSansCJK-Regular.ttc"),
+    "/Library/Fonts/NotoSansCJK-Regular.ttc",
     "/mnt/c/Windows/Fonts/msyh.ttc",
     "/mnt/c/Program Files/Android/Android Studio/plugins/design-tools/resources/layoutlib/data/fonts/NotoSansCJK-Regular.ttc",
 ]
@@ -65,6 +73,7 @@ VARIABLE_FONT_CANDIDATES = [
 BOLD_SIBLINGS = {
     "msyh.ttc": "msyhbd.ttc",
     "NotoSansCJK-Regular.ttc": "NotoSansCJK-Bold.ttc",
+    "NotoSansCJKtc-Regular.otf": "NotoSansCJKtc-Bold.otf",
 }
 
 FONT_CACHE_DIR = os.path.expanduser("~/.cache/security-check-kit/fonts")
