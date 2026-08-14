@@ -215,10 +215,8 @@ python3 -m pip install --user --break-system-packages "fpdf2>=2.8.8"
 4. 改完後驗證：
    ```bash
    forge build
-   slither . --json /tmp/security-scan/results_raw_after.json
-   python3 .claude/skills/security-scan/scripts/filter_results.py \
-     /tmp/security-scan/results_raw_after.json \
-     /tmp/security-scan/results_after.json \
-     --src-prefix src/
+   python3 .claude/skills/security-scan/scripts/cli.py scan \
+     --out-dir /tmp/security-scan/after --src-prefix src/
    ```
-   回報忽略前後的數量對比，並明確確認 A 類（已確認需修復）與 D 類（待確認）項目（不該被動到的那些）仍然原封不動出現在 `results_after.json` 裡 —— 代表沒有被誤蓋掉。如果這個 Step 整個被跳過（例如專案刻意保持原狀作為比對基準），要明確告訴使用者「忽略前/忽略後」在報告裡會顯示相同數字，並解釋原因，避免對方誤以為抑制註解沒生效。
+   比對加註解前後的發現數量，並明確確認 `category` 為 A（已確認需修復）與 D（待確認）的項目仍然原封不動出現在新的掃描結果裡 —— 代表沒有被誤蓋掉。**報告不呈現這個前後對照**（報告只呈現當次掃描結果），這是純內部的驗證動作。
+   注意區塊式抑制是**永久生效**的：未來在 `slither-disable-start`/`end` 之間新增的程式碼也會被靜默忽略，所以區塊範圍要盡量貼近實際需要抑制的那幾行。

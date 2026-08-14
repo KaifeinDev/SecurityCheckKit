@@ -1,0 +1,17 @@
+{
+  "src_prefix": [
+    "src/"
+  ],
+  "exclude_paths": [],
+  "files": [
+    {
+      "path": "src/VulnerableVault.sol",
+      "lines": 133,
+      "sha256": "9f47f4a862f5300b7d2dad3322351e41ff098bbe52699ebf263eca64c9dbec0d"
+    }
+  ],
+  "totals": {
+    "files": 1,
+    "lines": 133
+  }
+}

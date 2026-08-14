@@ -43,8 +43,16 @@ diff /tmp/sck-check/timelock-vault/report.md /tmp/sck-baseline-frozen/timelock-v
   pdftoppm -png -r 80 -f 1 -l 1 <report.pdf> /tmp/cover && open /tmp/cover-01.png
   ```
 
-## 改版預期會改變的（不是 regression）
+## 改版已完成的內容（2026-08-14）
 
-- 章節結構、標題文字、頁數、findings 編號格式。
-- 「工具原始輸出 vs 交付版掃描結果」對照表與 `severity_chart.png` 會消失。
-- 整案等級（第X級）那句話會從報告本文消失；內部版浮水印保留。
+- 章節結構、標題文字、findings 編號（`TLV-01` / `VLV-01` 單一序列）全部換新。
+- 「工具原始輸出 vs 交付版掃描結果」對照表與 `severity_chart.png` 已移除；`results_after.json`
+  也一併刪除（已無消費者）。
+- 整案等級（第X級）不再出現在報告本文，只驅動 exit code 與浮水印；浮水印本身不寫級數。
+- 頁數：`vulnerable-vault` 34 頁 → 16 頁；`timelock-vault` → 12 頁（章節強制分頁後的數字）。
+
+## 已知簡化
+
+- 目錄不含頁碼：fpdf2 需要兩段式渲染才能得知頁碼，對 11 條目的清單不划算。
+- fixture 的 `audit/worksheet.md` 有進版控，作為工作底稿的範例。實際專案的工作底稿**必須
+  gitignore**（`cli.py report` 會警告），fixture 是合成資料所以例外。

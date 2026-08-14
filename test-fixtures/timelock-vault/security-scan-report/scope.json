@@ -1,0 +1,17 @@
+{
+  "src_prefix": [
+    "src/"
+  ],
+  "exclude_paths": [],
+  "files": [
+    {
+      "path": "src/TimelockVault.sol",
+      "lines": 84,
+      "sha256": "92b31524c7baf9e16ae14fe053dc4fd6bc3d26687eec07920493b059f839849d"
+    }
+  ],
+  "totals": {
+    "files": 1,
+    "lines": 84
+  }
+}

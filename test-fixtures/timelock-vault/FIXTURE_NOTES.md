@@ -52,7 +52,6 @@ vulnerable-vault 的報告是「工具原始輸出 = 交付版掃描結果」的
 cd test-fixtures/timelock-vault
 python3 ../../scripts/cli.py report \
   --before security-scan-report/results_before.json \
-  --after security-scan-report/results_after.json \
   --classification security-scan-report/classification.json \
   --env security-scan-report/scan_env.json \
   --out-dir security-scan-report
@@ -64,3 +63,5 @@ python3 ../../scripts/cli.py report \
 方便直接比對兩個階段的差異。若要從頭重掃：把 `TimelockVault.sol.original` 換成
 `TimelockVault.sol` 跑 `cli.py scan` 得到 before/skeleton，再換回加了註解的版本重掃產
 after —— 順序反了會讓 before 變成 0 筆。
+
+**關於抑制註解**：本樣本保留 `src/TimelockVault.sol.original`（加註解前）與 `src/TimelockVault.sol`（加註解後）兩份，是抑制註解的唯一範例。2026-08 起這個動作已不是編號步驟，改為選配的 CI 衛生收尾（見 `SKILL.md` 最後一節）；報告也不再呈現加註解前後的數量對照。

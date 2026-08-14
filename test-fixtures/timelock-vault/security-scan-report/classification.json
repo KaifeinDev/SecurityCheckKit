@@ -98,5 +98,38 @@
       "source": "manual"
     }
   ],
-  "scope_exclusion_reasons": {}
+  "scope_exclusion_reasons": {},
+  "scenario_coverage": {
+    "contracts": [
+      {
+        "file": "src/TimelockVault.sol",
+        "checked": [
+          "L1",
+          "L2",
+          "L3",
+          "L9",
+          "L11",
+          "L12",
+          "L13",
+          "L14"
+        ],
+        "not_applicable": [
+          "L4",
+          "L5",
+          "L6",
+          "L7",
+          "L8",
+          "L10",
+          "L15",
+          "L16",
+          "L17",
+          "L18",
+          "L19"
+        ],
+        "hits": [
+          "TLV-06"
+        ]
+      }
+    ]
+  }
 }

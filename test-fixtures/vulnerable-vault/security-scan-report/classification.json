@@ -15,7 +15,7 @@
       "scan_id": 1,
       "source": "tool",
       "severity": "High",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "改用 Chainlink VRF 等可驗證隨機源；若必須鏈上取數，至少改為 commit-reveal 兩階段，並禁止在同一交易內完成投注與開獎。"
     },
     {
       "id": "VLV-02",
@@ -32,7 +32,7 @@
       "scan_id": 2,
       "source": "tool",
       "severity": "High",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "改為 checks-effects-interactions：先把 balances[msg.sender] 歸零、再發出外部呼叫；或加上 OpenZeppelin ReentrancyGuard 的 nonReentrant。"
     },
     {
       "id": "VLV-03",
@@ -49,7 +49,7 @@
       "scan_id": 3,
       "source": "tool",
       "severity": "High",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "移除 selfdestruct，或改為 onlyOwner + 兩階段確認（提案後經 timelock 才可執行）。合約自毀是不可逆動作，不應存在無保護的入口。"
     },
     {
       "id": "VLV-04",
@@ -66,7 +66,7 @@
       "scan_id": 4,
       "source": "tool",
       "severity": "Medium",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "改用 msg.sender 判斷呼叫者。tx.origin 在使用者被誘導呼叫惡意合約時會被冒用，不可作為授權依據。"
     },
     {
       "id": "VLV-05",
@@ -83,7 +83,7 @@
       "scan_id": 5,
       "source": "tool",
       "severity": "Medium",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "檢查低階呼叫的回傳值（`(bool ok, ) = ...; require(ok)`），或改用 OpenZeppelin 的 Address.sendValue。迴圈內單筆失敗要明確決定是整批 revert 還是記錄後續處理。"
     },
     {
       "id": "VLV-06",
@@ -115,9 +115,9 @@
       "scan_id": 7,
       "source": "tool",
       "severity": "Low",
-      "confirm_what": "（遷移佔位）",
-      "confirm_who": "（遷移佔位）",
-      "confirm_branches": "（遷移佔位）"
+      "confirm_what": "emergencyWithdraw 的 to 參數是否可能被傳入零地址：呼叫端是否已在鏈下驗證，或此函式是否僅由多簽觸發。",
+      "confirm_who": "合約擁有者／營運端",
+      "confirm_branches": "若呼叫端無保證 → 加上 require(to != address(0))；若確認僅由多簽以固定地址呼叫 → 改判 B 並在報告揭露此前提。"
     },
     {
       "id": "VLV-08",
@@ -134,7 +134,7 @@
       "scan_id": 8,
       "source": "tool",
       "severity": "Low",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "改為 pull 模式（受款方自行領取），或限制單批長度上限並由呼叫者自負 gas；同時處理單筆失敗不應讓整批卡死的情況。"
     },
     {
       "id": "VLV-09",
@@ -151,7 +151,7 @@
       "scan_id": 9,
       "source": "tool",
       "severity": "Low",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "與 VLV-02 同一根因，一併以 checks-effects-interactions 修正。"
     },
     {
       "id": "VLV-10",
@@ -168,7 +168,7 @@
       "scan_id": 10,
       "source": "tool",
       "severity": "Low",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "把事件移到外部呼叫之前發出，或在完成狀態更新後再發出，確保鏈下索引器看到的順序與實際狀態一致。"
     },
     {
       "id": "VLV-11",
@@ -201,7 +201,7 @@
       "scan_id": 12,
       "source": "tool",
       "severity": "Low",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "同 VLV-10：事件在外部呼叫之後才發出，改為狀態更新完成後立即發出。"
     },
     {
       "id": "VLV-13",
@@ -330,7 +330,7 @@
       "scenario": "L1",
       "scan_id": null,
       "source": "manual",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "把 `require(msg.sender == owner || true)` 改為 `require(msg.sender == owner)`。修正後需重新檢查 emergencyWithdraw/topUpRewardPool/batchPay 三個入口的實際可呼叫者。"
     },
     {
       "id": "VLV-21",
@@ -347,7 +347,7 @@
       "scenario": "L2",
       "scan_id": null,
       "source": "manual",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "為 creditBonus() 加上 onlyOwner（或專用的 rewards operator 角色），並確認修正後的 modifier 實作本身有效（見 VLV-20）。"
     },
     {
       "id": "VLV-22",
@@ -364,7 +364,7 @@
       "scenario": "L4",
       "scan_id": null,
       "source": "manual",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "swap() 加上 minTokenOut 與 deadline 參數，由呼叫者指定可接受的最差成交條件；oracle 報價改用 TWAP 或多來源中位數，避免以單點即時價成交。"
     },
     {
       "id": "VLV-23",
@@ -380,8 +380,44 @@
       "scenario": "L3",
       "scan_id": null,
       "source": "manual",
-      "remediation": "（遷移佔位：需補修復建議）"
+      "remediation": "為 deposit()/withdraw()/safeWithdraw()/swap() 加上 whenNotPaused，或直接改用 OpenZeppelin Pausable。只寫不讀的旗標等於沒有暫停機制。"
     }
   ],
-  "scope_exclusion_reasons": {}
+  "scope_exclusion_reasons": {},
+  "scenario_coverage": {
+    "contracts": [
+      {
+        "file": "src/VulnerableVault.sol",
+        "checked": [
+          "L1",
+          "L2",
+          "L3",
+          "L4",
+          "L5",
+          "L7",
+          "L9",
+          "L10",
+          "L11",
+          "L13",
+          "L14"
+        ],
+        "not_applicable": [
+          "L6",
+          "L8",
+          "L12",
+          "L15",
+          "L16",
+          "L17",
+          "L18",
+          "L19"
+        ],
+        "hits": [
+          "VLV-20",
+          "VLV-21",
+          "VLV-22",
+          "VLV-23"
+        ]
+      }
+    ]
+  }
 }
