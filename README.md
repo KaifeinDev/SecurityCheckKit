@@ -5,7 +5,9 @@
 此工具拆成兩層設計：
 
 1. **第一層：語言/工具無關的 CLI**（`scripts/cli.py`）—— 環境健檢、跑掃描、產報告，純 Python + 標準 Cli。
-2. **第二層：人工確認的分類與加註解流程**（`SKILL.md`）—— 「這個發現算不算數」需要工程判斷，刻意設計成必須有人確認才能繼續，不管有沒有 Claude Code 輔助都一樣。目前這層是透過 Claude Code 的 skill 對話完成；不用 Claude Code 的同仁可以照 `SKILL.md` 的分類標準手動填 `classification.json`，一樣能走完整個流程。
+2. **第二層：人工確認的分類流程**（`SKILL.md`）—— 「這個發現算不算數」需要工程判斷，刻意設計成必須有人確認才能繼續。
+
+**這兩層的分工要說清楚**：第一層（Step 0/1/3）是純確定性的，同一份輸入永遠得到同一份輸出，可以獨立於 Claude 執行、也可以把 `cli.py report` 的 exit code 接進 CI 當交付閘門。第二層（Step 2）**需要 LLM 輔助**：它要求對每一份合約跑完 `references/logic_scan.md` 的全部情境、做領域事故比對、產出資產托管地圖與特權角色權限表、並逐筆寫出引用行號的判斷依據（實際案例達 110 筆）——這不是「照著標準手動填」能達成的工作量。Step 2 裡**機械性可檢查的部分**（共用理由、必填欄位、High 降級與 High 判誤報）由 `cli.py review` 負責，那部分刻意不交給 LLM。
 
 ## 機密等級
 
@@ -24,17 +26,18 @@ SecurityCheckKit/
 ├── references/
 │   ├── pitfalls.md         ← 一些開發時遇過的問題（foundry.toml 陷阱、OZ 版本判斷、
 │   │                          slither-disable-next-line 失效、PDF 中文字型）
-│   ├── severity_grading.md ← 資安等級（第一～四級）判定標準與交付閘門行為（草稿）
+│   ├── severity_grading.md ← 交付閘門行為與 impact/severity/status 三欄位模型
 │   └── logic_scan.md       ← GPT-Scan 式邏輯漏洞情境庫（L1～L10），補 Slither 抓不到的
 │                              業務邏輯層級漏洞，Step 2 必跑
 ├── scripts/
 │   ├── cli.py              ← 統一入口：check / scan / report 三個子指令
 │   ├── env_check.py        ← Step 0：環境健檢（cli.py check 的實作）
-│   ├── scan.py             ← Step 1：跑 slither + 過濾 + 蒐集環境資訊 + 產分類 skeleton
+│   ├── review.py           ← Step 2：classification.json 的機械品質檢查（cli.py review）
+│   ├── scan.py             ← Step 1：跑 slither + 過濾 + 蒐集環境資訊 + 產 scope.json + 分類 skeleton
 │   │                          （cli.py scan 的實作；--prev-classification 沿用上次分類）
 │   ├── filter_results.py   ← 依 src 路徑過濾 slither JSON（被 scan.py 呼叫，也可獨立用）
-│   ├── report.py           ← Step 4：串 build_report.py + md_to_pdf.py（cli.py report 的實作）
-│   ├── build_report.py     ← 驗證 classification + 判級 + 產生 report.md / severity_chart.png
+│   ├── report.py           ← Step 3：串 build_report.py + md_to_pdf.py（cli.py report 的實作）
+│   ├── build_report.py     ← 驗證 classification + 判閘門 + 產生 report.md 與 audit/worksheet.md
 │   └── md_to_pdf.py        ← 把 report.md 轉成 report.pdf（含 CJK 字型處理）
 └── test-fixtures/
     ├── vulnerable-vault/   ← 第四級 ground truth：9+1 個已知漏洞（含 Slither 漏報對照）
@@ -46,12 +49,20 @@ SecurityCheckKit/
 | Step | 內容 | 誰負責 | 對應指令 |
 |---|---|---|---|
 | 0 | 環境健檢 | 自動 | `cli.py check` |
-| 1 | 跑 Slither + 過濾 | 自動 | `cli.py scan`（重掃帶 `--prev-classification` 沿用上次分類） |
-| 2 | 分類 A/B/C/D + 情境式邏輯掃描 + 記錄人工發現 | **人工確認** | 無 CLI 子指令：把 Step 1 產出的 `classification_skeleton.json` 複製成 `classification.json` 填空（Claude 輔助分類或手動填都可），並依 `references/logic_scan.md` 對每份合約跑一輪邏輯漏洞檢查 |
-| 3 | 加抑制註解 | **人工確認** | 無 CLI 子指令（Claude 依 SKILL.md 規則加註解，或工程師手動加） |
-| 4 | 產出 report.md + report.pdf | 自動 | `cli.py report` |
+| 1 | 跑 Slither + 過濾 + 產範圍清單 | 自動 | `cli.py scan`（重掃帶 `--prev-classification` 沿用上次分類） |
+| 2 | 分類 A/B/C/D + 情境式邏輯掃描 + 記錄人工發現 | **人工確認（需 LLM 輔助）** | 判斷本身無 CLI；填完用 `cli.py review` 做機械檢查 |
+| 3 | 產出交付報告 + 工作底稿 | 自動 | `cli.py report` |
 
-Step 2/3 仍需由工程師個人或與 AI 一起判斷，避免漏報或誤報發生。
+抑制註解（原 Step 3）已不在編號流程內，改為**選配的收尾動作**：它是開發團隊的 CI 衛生實務，不是審計實務（專業審計公司不改客戶程式碼），外部標的一律跳過。詳見 `SKILL.md` 最後一節。
+
+**兩份產出物**：
+
+| | 交付報告 | 工作底稿 |
+|---|---|---|
+| 路徑 | `<專案>/security-scan-report/report.pdf`（+ `report.md`） | `<專案>/audit/worksheet.md` |
+| 讀者 | 甲方 | 我方複核者、下次重掃的人 |
+| 內容 | 封面／目錄／摘要／掃描範圍／協定理解摘要／檢測方法／情境庫覆蓋／待處理項目／發現明細／已評估項目摘要／附錄 | 全量逐筆分類、複核提醒、完整覆蓋矩陣 |
+| git | 隨交付物 | **必須 gitignore**（含內部語氣），未忽略時 CLI 會警告 |
 
 `test-fixtures/` 底下是**已知答案的迴歸測試樣本**（測試夾具）：合約與漏洞都是刻意設計、事先寫死答案的，用來測「這套 kit 本身」準不準——不是要交付的產品合約，規則與流程文件也不依賴它們。每個樣本附一份解答卷（如 `vulnerable-vault/VULNERABILITY_CATALOG.md`，記錄植入了哪些漏洞、Slither 抓到/漏掉哪些）；改動判級邏輯或情境庫後，重跑這兩個樣本驗證等級與漏報對照沒被改壞。
 
@@ -95,7 +106,7 @@ Step 2/3 仍需由工程師個人或與 AI 一起判斷，避免漏報或誤報�
 
 ### 不用 Claude Code：直接跑 CLI
 
-環境需求：Foundry（`forge`）、Slither（`slither`，可以裝在 venv）、系統 python 需要 `fpdf2` + `matplotlib`（見下方「環境安裝」）。
+環境需求：Foundry（`forge`）、Slither（`slither`，可以裝在 venv）、系統 python 需要 `fpdf2`（見下方「環境安裝」）。
 
 ```bash
 # Step 0：環境健檢，exit code 0 才代表可以往下走
@@ -112,30 +123,29 @@ python3 <kit>/scripts/cli.py scan \
 
 # Step 2：把 Step 1 產出的 classification_skeleton.json 複製成 classification.json，
 # 依 SKILL.md「Step 2」的分類標準，逐筆填入 category（A 已確認需修復 / B 可接受風險 /
-# C 誤報 / D 待確認）與 dev_note；預填的 check/impact/file/lines 不要動（Step 4 會核對）。
+# C 誤報 / D 待確認）與 dev_note；預填的 check/impact/file/lines 不要動（Step 3 會核對）。
+# 另外必填：severity（業界五級）、降級時的 severity_rationale、A 類的 remediation、
+# D 類的 confirm_what/confirm_who/confirm_branches。
 # 另外依 references/logic_scan.md 的十條情境（權限檢查實作、未保護的狀態變更、
 # 旗標未落實、滑點、價格源…）對每份合約跑一輪邏輯漏洞檢查 —— 這是補 Slither
 # 抓不到的業務邏輯漏洞的步驟；命中的與其他讀碼發現的工具外問題寫進 manual_findings[]
 # （格式範例見 SKILL.md）
 
-# Step 3：對 B/C 類項目手動加上區塊式抑制註解
-#   // slither-disable-start <check>
-#   // Dev Note: <理由>
-#   <程式碼>
-#   // slither-disable-end <check>
-# 改完後重新跑一次 Step 1（存到不同 --out-dir，例如 /tmp/security-scan/after），
-# 確認 A 類（待修復）與 D 類（待確認）項目仍然原封不動出現在新的掃描結果裡
+# Step 2 收尾：機械檢查（共用理由、必填欄位、High 降級／High 判誤報）
+python3 <kit>/scripts/cli.py review --classification /tmp/security-scan/classification.json
 
-# Step 4：產出報告
+# Step 3：產出交付報告 + 工作底稿
 python3 <kit>/scripts/cli.py report \
   --before /tmp/security-scan/results_before.json \
-  --after  /tmp/security-scan/after/results_before.json \
   --classification /tmp/security-scan/classification.json \
   --env /tmp/security-scan/scan_env.json \
+  --scope /tmp/security-scan/scope.json \
+  --overview ./audit/overview.md \
+  --client "<甲方名稱>" --engagement-from 2026-08-01 --engagement-to 2026-08-14 \
   --out-dir ./security-scan-report
 ```
 
-`report` 的 `--classification` / `--env` 是選填 —— 沒提供時，報告對應章節會註明「未提供」而不是報錯，方便只想快速看一次掃描結果、還不想走完整分類流程的情境。
+`report` 的 `--classification` / `--env` / `--scope` / `--overview` 都是選填 —— 沒提供時，報告對應章節會註明「未提供」而不是報錯，方便只想快速看一次掃描結果、還不想走完整分類流程的情境。
 
 ### CLI 子指令細節
 
@@ -149,16 +159,22 @@ python3 <kit>/scripts/cli.py report \
 **`cli.py scan`**（`scan.py`）
 - 跑 `slither . --json`
 - 用 `filter_results.is_own_finding` 過濾（`--full-audit` 跳過過濾）
-- 寫 `results_raw.json` / `results_before.json` / `scan_env.json` / `classification_skeleton.json` 到 `--out-dir`（skeleton 已預填每筆發現的所有欄位，Step 2 只需填 `category` / `dev_note`，杜絕手抄造成的分類檔與掃描結果脫鉤）
+- 寫 `results_raw.json` / `results_before.json` / `scan_env.json` / `scope.json` / `classification_skeleton.json` 到 `--out-dir`（`scope.json` 記錄納入掃描的每個 `.sol` 檔、行數與 sha256，以及 `--exclude-path` 的排除清單，供報告的「掃描範圍」章節使用）（skeleton 已預填每筆發現的所有欄位，Step 2 只需填 `category` / `dev_note`，杜絕手抄造成的分類檔與掃描結果脫鉤）
 - `--prev-classification <path>`：跨次掃描的增量分類 —— 與上次分類檔比對（先 check + file + 起始行號完全比對；行號位移時退用 check + file、且兩邊都唯一才配對，避免張冠李戴），對上的沿用 category/dev_note 並標記 `carried_from_previous`（`exact`/`fallback`），新發現留空，上次的 manual_findings 原樣帶入（標 `manual`）；「上次有、這次沒有」的項目列在終端機供確認已修復。沿用結果只可能把等級拉低不可能拉高（未分類視同 D），fallback 與 manual 標記的項目 Step 2 須逐筆複核
 - 印出摘要表（check / impact / 位置 / 描述）方便直接看
 
+**`cli.py review`**（`review.py`）
+- 讀 `classification.json`，做**規則式**檢查（不做語意判斷）：多筆共用完全相同的 `dev_note`、`dev_note` 過短、A 類缺 `remediation`、D 類缺三格、缺 `severity`、降級未附 `severity_rationale`
+- 另外單獨成節列出兩組重點：**工具判 High 而我方判誤報（C）**、**工具判 High 而我方降級** —— 這是整份分類裡權重最高、甲方最可能挑戰的判斷
+- exit code：`0` = 無待抽查項目；`1` = 有待抽查項目（**提醒，不是錯誤**）；`2` = 檔案讀不到
+- `--json` 輸出結構化結果
+
 **`cli.py report`**（`report.py`）
-- 先驗證 `classification.json`：逐筆與 `--before` 的掃描結果核對（比對鍵：check + file + 起始行號），對不上的過期項目、無效的 `category`/`impact` 值、`impact` 與掃描結果不符、B/C 類缺 `dev_note`，一律列出錯誤並以 exit code `2` 結束、**不產出報告**；掃描有但分類檔漏掉的發現則視同「未分類」（判級時當 D 算，未分類的 High 直接第四級）
-- 呼叫 `build_report.py` 產生 `report.md` + `severity_chart.png`（含摘要結論資安等級、檢測方法與範圍限制聲明、人工複核發現章節、評定標準附錄）
+- 先驗證 `classification.json`：逐筆與 `--before` 的掃描結果核對（比對鍵：check + file + 起始行號），對不上的過期項目、無效的 `category`/`impact`/`severity` 值、`impact` 與掃描結果不符、B/C 類缺 `dev_note`、A 類缺 `remediation`、D 類缺確認三格、降級缺 `severity_rationale`、`id` 格式錯或重複，一律列出錯誤並以 exit code `2` 結束、**不產出報告**；掃描有但分類檔漏掉的發現則視同「未分類」（判級時當 D 算，未分類的 High 直接第四級）
+- 呼叫 `build_report.py` 產生 `report.md`（封面資訊、目錄、摘要與嚴重度計數表、掃描範圍、協定理解摘要、檢測方法、情境庫覆蓋、待處理項目、發現明細、已評估項目摘要、處置分類附錄）與 `audit/worksheet.md`（工作底稿）
 - 呼叫 `md_to_pdf.py` 轉成 `report.pdf`（`--skip-pdf` 可跳過這步，只留 markdown）
-- **exit code 即交付閘門**（見 `references/severity_grading.md`）：`0` = 第一/二級可交付；`3`/`4` = 第三/四級（報告照常產出但帶「內部工作版本」標記，僅供內部追蹤）；`2` = 驗證失敗
-- 自動探測系統上哪個 python 裝有 `fpdf2` + `matplotlib`（即使目前在 Slither 的 venv 底下執行也一樣能找到系統 python），找不到就用 `SECURITY_SCAN_REPORT_PYTHON` 環境變數指定
+- **exit code 即交付閘門**（見 `references/severity_grading.md`）：`0` = 可交付；`3`/`4` = 不可交付（報告照常產出但帶「內部工作版本」標記，僅供內部追蹤）；`2` = 驗證失敗。**等級本身不出現在報告本文**，只驅動 exit code 與浮水印
+- 自動探測系統上哪個 python 裝有 `fpdf2`（即使目前在 Slither 的 venv 底下執行也一樣能找到系統 python），找不到就用 `SECURITY_SCAN_REPORT_PYTHON` 環境變數指定
 - `--font` 可指定 CJK 字型路徑（對應 `md_to_pdf.py` 的 `SECURITY_SCAN_CJK_FONT`）
 
 ### 環境安裝
@@ -170,7 +186,7 @@ pip install slither-analyzer
 solc-select install <version> && solc-select use <version>
 
 # 報告產生需要的套件，裝在系統 python（不是上面的 venv）
-python3 -m pip install --user --break-system-packages fpdf2 matplotlib
+python3 -m pip install --user --break-system-packages "fpdf2>=2.8.8"
 ```
 
 ## 測試 Fixtures

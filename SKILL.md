@@ -8,7 +8,7 @@ argument-hint: "[--full-audit]"
 
 這個 skill 把「Slither 掃描 → AI 分類 → 加抑制註解 → 產出完整 PDF 報告」固定成一個可重複執行的流程，用在 Foundry 專案（特別是使用 OpenZeppelin upgradeable 合約的專案）。
 
-Step 0/1/4（環境健檢、掃描、產報告）背後都是呼叫 `scripts/cli.py`（`check` / `scan` / `report` 三個子指令）—— 這套 CLI 不依賴 Claude Code，同仁就算不用 Claude 也能直接在終端機跑同一套流程。完整的架構說明、CLI 用法、輸出格式見 `README.md`。Step 2（AI 分類）與 Step 3（加註解）仍然是本 skill 獨有、需要人在 Claude Code 對話中確認的部分，不對應任何 CLI 子指令。
+Step 0/1/3（環境健檢、掃描、產報告）背後都是呼叫 `scripts/cli.py`（`check` / `scan` / `report`）—— 這幾個步驟是純確定性的，可以獨立於 Claude 執行、也可以接進 CI。Step 2（分類）需要工程判斷與 LLM 輔助，其中**機械性可檢查的部分**由 `cli.py review` 負責。加抑制註解已不再是編號步驟，改為選配的收尾動作（見本文件最後一節）。完整的架構說明、CLI 用法、輸出格式見 `README.md`。
 
 **在開始前務必先讀 `references/pitfalls.md`** —— 裡面記錄了這個流程實測踩過的坑（`foundry.toml` 的 `src` 設定陷阱、OpenZeppelin 版本判斷、`slither-disable-next-line` 失效問題、PDF 中文字型問題），每一條都要遵守，不要重新踩雷。
 
@@ -16,7 +16,7 @@ Step 0/1/4（環境健檢、掃描、產報告）背後都是呼叫 `scripts/cli
 
 1. 只能新增「註解」，絕對不能修改任何程式碼的商業邏輯、變數名稱、函式參數或執行流程。
 2. 如果不確定某個發現是否可以忽略，一律歸類為 D 類（待人工確認），絕不自行加 disable 標籤。
-3. Step 2（分類）與 Step 3（加註解）是**人工確認關卡** —— 執行前必須先把內容列給使用者看，明確等待使用者回覆確認才能繼續。其餘步驟（環境健檢、掃描、產報告）可以自動執行，但一旦遇到「換依賴版本也解決不了、必須改動合約呼叫方式」的情況，一律停下來問使用者，不准自己動手改商業邏輯。
+3. Step 2（分類）是**人工確認關卡** —— 執行前必須先把內容列給使用者看，明確等待使用者回覆確認才能繼續。其餘步驟（環境健檢、掃描、產報告）可以自動執行，但一旦遇到「換依賴版本也解決不了、必須改動合約呼叫方式」的情況，一律停下來問使用者，不准自己動手改商業邏輯。
 4. `--full-audit` 參數：預設只掃描並報告專案自己的原始碼（排除 `lib/` 等相依套件）；帶這個參數才把相依套件本身的發現也納入報告。
 
 ## Step 0：環境健檢（自動，能跳過就跳過）
@@ -79,6 +79,16 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 - **C. 可直接忽略（False Positive）**：工具因靜態分析限制誤判，實際上有安全機制保護（如已有 nonReentrant、已做過 zero-address 檢查、OZ upgradeable 的 `__gap` 慣例等）。
 - **D. 待人工確認**：信心不足，還無法判斷屬於 A/B/C 哪一類的項目。**信心不足時一律歸類 D，不要用猜的塞進 A/B/C。**
 
+**Step 2 的必填欄位**（`cli.py report` 會逐條驗證，缺了直接 exit 2、不產報告）：
+
+- `severity`：業界五級（Critical／High／Medium／Low／Informational），**必填**。skeleton 已預填為工具 impact 的對應值，維持原值永遠不需要理由。
+- `severity_rationale`：只有**降級**（判得比工具輕）時必填。閘門讀的是唯讀的 `impact`，所以降級不會繞過閘門，但報告會並列印出兩個等級與這段理由，讓甲方能檢視這個判斷。
+- `remediation`：`category = A` 必填，寫「怎麼修」。
+- `confirm_what` / `confirm_who` / `confirm_branches`：`category = D` 必填三格——要確認什麼、問誰、兩種答案各自怎麼做。**D 類不得停在問句。**
+- `id`：統一編號（`<專案縮寫大寫>-<兩位數>`，如 `BGT-01`），掃描發現與人工發現共用同一序列、不得重複；原掃描序號留在 `scan_id`，不印進報告。
+
+**另外兩個頂層鍵**：`scenario_coverage`（情境庫逐合約覆蓋紀錄，進報告的「情境庫覆蓋」章節——`hits` 內的編號必須對得上實際存在的 finding）與 `scope_exclusion_reasons`（`--exclude-path` 每個前綴的排除理由，進報告的「掃描範圍」章節）。
+
 **從 skeleton 開始，不要手打**：把 Step 1 產出的 `classification_skeleton.json` 複製成 `/tmp/security-scan/classification.json`，只填每筆的 `category` 與 `dev_note`，**不要改動預填的 `check`/`impact`/`file`/`lines`**（Step 4 會逐筆核對這些欄位跟掃描結果是否一致，不一致直接拒絕產報告；`impact` 打錯以前會讓資安等級虛高，現在會被擋下）：
 
 ```json
@@ -127,9 +137,67 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 
 **重掃沿用（`--prev-classification`）的複核義務**：skeleton 裡標 `carried_from_previous: "exact"` 的項目可視為已分類，但列給使用者時要註明是沿用；標 `"fallback"` 的（行號位移、用 check+file 對上的）必須逐筆重讀確認沒對錯行；帶入的 manual_findings（標 `"manual"`）不隨掃描結果失效，要逐筆重新確認仍然成立，已修復的直接刪除。
 
+**分類填完後先跑機械檢查**：
+
+```bash
+python3 .claude/skills/security-scan/scripts/cli.py review \
+  --classification /tmp/security-scan/classification.json
+```
+
+它會列出：共用同一段 dev_note 的群組、dev_note 過短、必填欄位缺漏、降級未附理由，以及兩個單獨成節的重點——**「工具判 High、我方判誤報（C）」**與**「工具判 High、我方降級」**。這兩節是整份分類裡權重最高、甲方最可能逐條挑戰的判斷，必須逐筆確認 dev_note 是針對該筆自己的程式碼寫的，不是共用的模板理由。exit code 1 代表有待抽查項目（提醒，不是錯誤）。
+
+**還要另外產出協定理解摘要**：把 `audit/AUDIT_NOTES.md` 的資產與托管地圖、特權角色權限表改寫成對外語氣的 markdown，存成 `audit/overview.md`，用 `--overview` 傳給 report。這會成為報告的「協定理解摘要」章節——甲方最想知道的一件事是「誰能動我的錢」，而這是全部產出裡唯一真正需要額外人力的一項。缺這份時報告該章節會印出明顯的「未提供」警語。
+
 把 A/B/C/D 四類清單與 manual_findings 列給使用者看（含每筆的具體理由），**明確等待使用者確認**（例如回覆「確認」或「ok」）才能進入 Step 3。使用者若要求把某筆從一類移到另一類，更新 `classification.json` 後重新給使用者看一次。
 
-## Step 3：加抑制註解 【人工確認關卡】
+## Step 3：產出完整報告（自動）
+
+```bash
+python3 .claude/skills/security-scan/scripts/cli.py report \
+  --before /tmp/security-scan/results_before.json \
+  --classification /tmp/security-scan/classification.json \
+  --env /tmp/security-scan/scan_env.json \
+  --scope /tmp/security-scan/scope.json \
+  --overview <專案根目錄>/audit/overview.md \
+  --client "<甲方名稱>" \
+  --engagement-from <YYYY-MM-DD> --engagement-to <YYYY-MM-DD> \
+  --out-dir <專案根目錄>/security-scan-report
+```
+
+**會產出兩份文件**：
+
+- `<out-dir>/report.md` + `report.pdf` —— **交付報告**，給甲方。
+- `<專案根>/audit/worksheet.md` —— **工作底稿**，內部用（全量逐筆分類、複核提醒、完整覆蓋矩陣）。刻意寫在交付目錄之外、不轉 PDF。**這個路徑必須被 gitignore**，否則會隨程式碼交付給甲方；沒被忽略時 CLI 會警告。用 `--worksheet` 可改路徑。
+
+這個指令依序呼叫 `build_report.py`（產生 `report.md`）與 `md_to_pdf.py`（轉成 `report.pdf`，需要 `fpdf2`）。`fpdf2` 要裝在系統 python（不是 slither 用的 venv，venv 的 pip 曾經壞掉過，見 `pitfalls.md`）：
+
+```bash
+python3 -m pip install --user --break-system-packages "fpdf2>=2.8.8"
+```
+
+`fpdf2` 版本**建議 2.8.8 以上**：2.8.7 有一個字型子集化的靜默亂碼 bug，會把封面頁的短 ASCII 文字（`檢測工具`／`檢測日期`）畫錯但不拋例外，見 `pitfalls.md` #6。若環境的 python 只支援到 2.8.4（例如 macOS 內建的 Python 3.9），實測未重現該 bug，但**每次產出後仍要把封面頁轉成圖片目視確認**（`pdftoppm -png -f 1 -l 1 report.pdf /tmp/cover`）——這個 bug 不拋例外，`pdftotext` 也讀不出來。
+
+`cli.py report` 會自動探測「哪個 python 真的裝了 fpdf2」，就算目前在 slither 的 venv 底下執行也能找到系統 python；找不到時會清楚報錯並提示設定 `SECURITY_SCAN_REPORT_PYTHON` 環境變數指向正確的 python。
+
+`md_to_pdf.py` 會自動找系統上的 CJK 字型（含優先嘗試將可變字重字型切出 Regular/Bold 兩個靜態字重，快取於 `~/.cache/security-check-kit/fonts/`，讓標題真正以粗體呈現而非只放大字級）；如果找不到，會清楚報錯並提示設定 `SECURITY_SCAN_CJK_FONT`（可選搭配 `SECURITY_SCAN_CJK_FONT_BOLD`）環境變數指向涵蓋中文字的字型檔（`.ttc`/`.ttf`），也可以用 `cli.py report --font <path> [--font-bold <path>]` 直接傳入。
+
+**`cli.py report` 的 exit code 就是交付閘門**（詳見 `references/severity_grading.md`）：
+
+- `0` = 可交付
+- `3` / `4` = 不可交付 —— 報告照常產出，但開頭帶「內部工作版本 — 不可作為交付文件」標記，只能用於內部追蹤，**不可交給甲方**
+- `2` = classification.json 驗證失敗（缺漏對不上掃描結果、category/impact/severity 值錯誤、B/C 缺 dev_note、A 缺 remediation、D 缺三格、降級缺理由等），不會產出報告，逐筆錯誤在 stderr —— 修正後重跑
+
+**等級（第一～四級）不出現在報告本文**，它只驅動 exit code 與浮水印，見 `references/severity_grading.md`。
+
+最後跟使用者回報：
+- `report.pdf` 與 `worksheet.md` 的路徑
+- **閘門結果**：可交付／不可交付。不可交付時明確告知「這份是內部工作版本，不能交付」，並列出卡住閘門的項目編號（CLI 會印出）
+- 本次發現總數與嚴重度分布
+- 若有自動預分類或沿用前次分類的項目，明講筆數（報告本身也會揭露）
+
+## 選配：抑制註解（降低後續 CI 雜訊，不是編號步驟）
+
+**這一段與報告無關。** 專業審計公司不會改客戶的程式碼，誤報在內部就被丟掉、不進交付物；抑制註解是**開發團隊的 CI 衛生實務**——它的價值是「下次跑掃描時那些已判定的發現不會淹沒新問題」，而這個價值只在「我們持續擁有並維護這份程式碼」時成立。外部標的（審計對象、回測樣本）一律跳過，那是正確的做法，不是偷懶。報告永遠只呈現當次掃描的當前結果，不做加註解前後的對照。
 
 只處理 `classification.json` 裡 `category` 為 `B` 或 `C` 的項目——這兩類是「不是真的需要修的東西」，才適合抑制。`A`（已確認需修復）與 `D`（待確認）絕對不能加抑制註解，加了會讓真正的漏洞或還沒判斷清楚的項目從掃描結果裡消失。
 
@@ -154,38 +222,3 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
      --src-prefix src/
    ```
    回報忽略前後的數量對比，並明確確認 A 類（已確認需修復）與 D 類（待確認）項目（不該被動到的那些）仍然原封不動出現在 `results_after.json` 裡 —— 代表沒有被誤蓋掉。如果這個 Step 整個被跳過（例如專案刻意保持原狀作為比對基準），要明確告訴使用者「忽略前/忽略後」在報告裡會顯示相同數字，並解釋原因，避免對方誤以為抑制註解沒生效。
-
-## Step 4：產出完整報告（自動）
-
-```bash
-python3 .claude/skills/security-scan/scripts/cli.py report \
-  --before /tmp/security-scan/results_before.json \
-  --after /tmp/security-scan/results_after.json \
-  --classification /tmp/security-scan/classification.json \
-  --env /tmp/security-scan/scan_env.json \
-  --out-dir <專案根目錄>/security-scan-report
-```
-
-這個指令依序呼叫 `build_report.py`（產生 `report.md` + `severity_chart.png`，需要 `matplotlib`）與 `md_to_pdf.py`（轉成 `report.pdf`，需要 `fpdf2`）。這兩個套件要裝在系統 python（不是 slither 用的 venv，venv 的 pip 曾經壞掉過，見 `pitfalls.md`）：
-
-```bash
-python3 -m pip install --user --break-system-packages "fpdf2>=2.8.8" matplotlib
-```
-
-`fpdf2` 版本要 **2.8.8 以上**：2.8.7 有一個字型子集化的靜默亂碼 bug，會把封面頁的短 ASCII 文字（`檢測工具`／`檢測日期`）畫錯但不拋例外，見 `pitfalls.md` #6。
-
-`cli.py report` 會自動探測「哪個 python 真的裝了 fpdf2/matplotlib」，就算目前在 slither 的 venv 底下執行也能找到系統 python；找不到時會清楚報錯並提示設定 `SECURITY_SCAN_REPORT_PYTHON` 環境變數指向正確的 python。
-
-`md_to_pdf.py` 會自動找系統上的 CJK 字型（含優先嘗試將可變字重字型切出 Regular/Bold 兩個靜態字重，快取於 `~/.cache/security-check-kit/fonts/`，讓標題真正以粗體呈現而非只放大字級）；如果找不到，會清楚報錯並提示設定 `SECURITY_SCAN_CJK_FONT`（可選搭配 `SECURITY_SCAN_CJK_FONT_BOLD`）環境變數指向涵蓋中文字的字型檔（`.ttc`/`.ttf`），也可以用 `cli.py report --font <path> [--font-bold <path>]` 直接傳入。
-
-**`cli.py report` 的 exit code 就是交付閘門**（詳見 `references/severity_grading.md`）：
-
-- `0` = 第一/二級，報告可作為交付文件
-- `3` = 第三級或尚未評估、`4` = 第四級 —— 報告照常產出，但開頭帶「內部工作版本 — 不可作為交付文件」標記，只能用於內部追蹤，**不可交給甲方**
-- `2` = classification.json 驗證失敗（缺漏對不上掃描結果、category/impact 值錯誤、B/C 缺 dev_note 等），不會產出報告，逐筆錯誤在 stderr —— 修正後重跑
-
-最後跟使用者回報：
-- `report.pdf` 的路徑
-- **資安等級與閘門結果**：第三/四級要明確告知「這份是內部工作版本，不能交付」，並列出把等級卡住的項目
-- 工具原始輸出 vs 交付版掃描結果的數量對比（後者 = 甲方重掃可重現的數字）
-- 提醒 D 類與未分類清單已經包含在報告附錄裡，不用再額外用文字轉達
