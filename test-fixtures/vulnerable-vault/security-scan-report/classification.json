@@ -1,7 +1,7 @@
 {
   "findings": [
     {
-      "id": 1,
+      "id": "VLV-01",
       "check": "weak-prng",
       "impact": "High",
       "file": "src/VulnerableVault.sol",
@@ -11,10 +11,14 @@
       ],
       "description": "pickWinner() uses block.timestamp/block.prevrandao as a source of randomness",
       "category": "A",
-      "dev_note": "真實漏洞（見 VULNERABILITY_CATALOG.md V5）：得獎者可被驗證者/礦工操縱，需修復，不可忽略。"
+      "dev_note": "真實漏洞（見 VULNERABILITY_CATALOG.md V5）：得獎者可被驗證者/礦工操縱，需修復，不可忽略。",
+      "scan_id": 1,
+      "source": "tool",
+      "severity": "High",
+      "remediation": "（遷移佔位：需補修復建議）"
     },
     {
-      "id": 2,
+      "id": "VLV-02",
       "check": "reentrancy-eth",
       "impact": "High",
       "file": "src/VulnerableVault.sol",
@@ -24,10 +28,14 @@
       ],
       "description": "withdraw() sends ETH via external call before zeroing balances[msg.sender]",
       "category": "A",
-      "dev_note": "真實漏洞（見 VULNERABILITY_CATALOG.md V1）：經典重入攻擊，可被惡意合約清空金庫，需修復，不可忽略。"
+      "dev_note": "真實漏洞（見 VULNERABILITY_CATALOG.md V1）：經典重入攻擊，可被惡意合約清空金庫，需修復，不可忽略。",
+      "scan_id": 2,
+      "source": "tool",
+      "severity": "High",
+      "remediation": "（遷移佔位：需補修復建議）"
     },
     {
-      "id": 3,
+      "id": "VLV-03",
       "check": "suicidal",
       "impact": "High",
       "file": "src/VulnerableVault.sol",
@@ -37,10 +45,14 @@
       ],
       "description": "shutdown() calls selfdestruct with no access control",
       "category": "A",
-      "dev_note": "真實漏洞（見 VULNERABILITY_CATALOG.md V2）：任何人皆可自毀合約，需修復，不可忽略。"
+      "dev_note": "真實漏洞（見 VULNERABILITY_CATALOG.md V2）：任何人皆可自毀合約，需修復，不可忽略。",
+      "scan_id": 3,
+      "source": "tool",
+      "severity": "High",
+      "remediation": "（遷移佔位：需補修復建議）"
     },
     {
-      "id": 4,
+      "id": "VLV-04",
       "check": "tx-origin",
       "impact": "Medium",
       "file": "src/VulnerableVault.sol",
@@ -50,10 +62,14 @@
       ],
       "description": "adminSetPaused(bool) uses tx.origin for authorization",
       "category": "A",
-      "dev_note": "真實漏洞（見 VULNERABILITY_CATALOG.md V4）：可被釣魚合約繞過權限檢查，需修復，不可忽略。"
+      "dev_note": "真實漏洞（見 VULNERABILITY_CATALOG.md V4）：可被釣魚合約繞過權限檢查，需修復，不可忽略。",
+      "scan_id": 4,
+      "source": "tool",
+      "severity": "Medium",
+      "remediation": "（遷移佔位：需補修復建議）"
     },
     {
-      "id": 5,
+      "id": "VLV-05",
       "check": "unchecked-lowlevel",
       "impact": "Medium",
       "file": "src/VulnerableVault.sol",
@@ -63,10 +79,14 @@
       ],
       "description": "batchPay() ignores the return value of the low-level call in the loop",
       "category": "A",
-      "dev_note": "真實漏洞（見 VULNERABILITY_CATALOG.md V7）：轉帳失敗會被靜默吞掉，帳務與實際資金不一致，需修復，不可忽略。"
+      "dev_note": "真實漏洞（見 VULNERABILITY_CATALOG.md V7）：轉帳失敗會被靜默吞掉，帳務與實際資金不一致，需修復，不可忽略。",
+      "scan_id": 5,
+      "source": "tool",
+      "severity": "Medium",
+      "remediation": "（遷移佔位：需補修復建議）"
     },
     {
-      "id": 6,
+      "id": "VLV-06",
       "check": "events-maths",
       "impact": "Low",
       "file": "src/VulnerableVault.sol",
@@ -76,10 +96,13 @@
       ],
       "description": "topUpRewardPool(uint256) changes rewardPool without emitting an event",
       "category": "B",
-      "dev_note": "只影響鏈下可觀測性，不影響資金安全；僅 onlyOwner 可呼叫，屬已知可接受風險，非本次測試刻意植入的漏洞項目。"
+      "dev_note": "只影響鏈下可觀測性，不影響資金安全；僅 onlyOwner 可呼叫，屬已知可接受風險，非本次測試刻意植入的漏洞項目。",
+      "scan_id": 6,
+      "source": "tool",
+      "severity": "Low"
     },
     {
-      "id": 7,
+      "id": "VLV-07",
       "check": "missing-zero-check",
       "impact": "Low",
       "file": "src/VulnerableVault.sol",
@@ -88,10 +111,16 @@
       ],
       "description": "emergencyWithdraw(address,uint256).to lacks a zero-address check",
       "category": "D",
-      "dev_note": "涉及資金流向（轉帳目標地址），依規則歸類 D：雖非本次刻意植入的漏洞編號，但屬真實可改進項目，需人工確認是否修復。"
+      "dev_note": "涉及資金流向（轉帳目標地址），依規則歸類 D：雖非本次刻意植入的漏洞編號，但屬真實可改進項目，需人工確認是否修復。",
+      "scan_id": 7,
+      "source": "tool",
+      "severity": "Low",
+      "confirm_what": "（遷移佔位）",
+      "confirm_who": "（遷移佔位）",
+      "confirm_branches": "（遷移佔位）"
     },
     {
-      "id": 8,
+      "id": "VLV-08",
       "check": "calls-loop",
       "impact": "Low",
       "file": "src/VulnerableVault.sol",
@@ -101,10 +130,14 @@
       ],
       "description": "batchPay() makes external calls inside a loop",
       "category": "A",
-      "dev_note": "與 #5 同一根因（見 VULNERABILITY_CATALOG.md V7），同一批修復。"
+      "dev_note": "與 #5 同一根因（見 VULNERABILITY_CATALOG.md V7），同一批修復。",
+      "scan_id": 8,
+      "source": "tool",
+      "severity": "Low",
+      "remediation": "（遷移佔位：需補修復建議）"
     },
     {
-      "id": 9,
+      "id": "VLV-09",
       "check": "reentrancy-benign",
       "impact": "Low",
       "file": "src/VulnerableVault.sol",
@@ -114,10 +147,14 @@
       ],
       "description": "Reentrancy in withdraw() (benign variant)",
       "category": "A",
-      "dev_note": "與 #2 同一根因（V1 的重複偵測），一併修復即可解決。"
+      "dev_note": "與 #2 同一根因（V1 的重複偵測），一併修復即可解決。",
+      "scan_id": 9,
+      "source": "tool",
+      "severity": "Low",
+      "remediation": "（遷移佔位：需補修復建議）"
     },
     {
-      "id": 10,
+      "id": "VLV-10",
       "check": "reentrancy-events",
       "impact": "Low",
       "file": "src/VulnerableVault.sol",
@@ -127,10 +164,14 @@
       ],
       "description": "Reentrancy in pickWinner() (event-ordering variant)",
       "category": "A",
-      "dev_note": "pickWinner() 已因 #1（weak-prng）被判定為真實漏洞函式，此處事件順序問題一併留待修復時處理。"
+      "dev_note": "pickWinner() 已因 #1（weak-prng）被判定為真實漏洞函式，此處事件順序問題一併留待修復時處理。",
+      "scan_id": 10,
+      "source": "tool",
+      "severity": "Low",
+      "remediation": "（遷移佔位：需補修復建議）"
     },
     {
-      "id": 11,
+      "id": "VLV-11",
       "check": "reentrancy-events",
       "impact": "Low",
       "file": "src/VulnerableVault.sol",
@@ -140,10 +181,13 @@
       ],
       "description": "Reentrancy in safeWithdraw() (event-ordering variant)",
       "category": "C",
-      "dev_note": "已確認為誤報：safeWithdraw() 採用正確的 checks-effects-interactions 順序（balances 在外部呼叫前歸零），reentrancy-events 只檢查事件在外部呼叫之後才 emit，不代表狀態層級可被重入利用。此為本次測試刻意設計的『安全對照組』函式，用來驗證工具是否會誤判安全程式碼——結果：沒有被 reentrancy-eth/reentrancy-benign 誤判，僅這個最低權重的事件排序 detector 命中，判定為誤報。"
+      "dev_note": "已確認為誤報：safeWithdraw() 採用正確的 checks-effects-interactions 順序（balances 在外部呼叫前歸零），reentrancy-events 只檢查事件在外部呼叫之後才 emit，不代表狀態層級可被重入利用。此為本次測試刻意設計的『安全對照組』函式，用來驗證工具是否會誤判安全程式碼——結果：沒有被 reentrancy-eth/reentrancy-benign 誤判，僅這個最低權重的事件排序 detector 命中，判定為誤報。",
+      "scan_id": 11,
+      "source": "tool",
+      "severity": "Low"
     },
     {
-      "id": 12,
+      "id": "VLV-12",
       "check": "reentrancy-events",
       "impact": "Low",
       "file": "src/VulnerableVault.sol",
@@ -153,10 +197,14 @@
       ],
       "description": "Reentrancy in withdraw() (event-ordering variant)",
       "category": "A",
-      "dev_note": "與 #2 同一根因（V1 的重複偵測）。"
+      "dev_note": "與 #2 同一根因（V1 的重複偵測）。",
+      "scan_id": 12,
+      "source": "tool",
+      "severity": "Low",
+      "remediation": "（遷移佔位：需補修復建議）"
     },
     {
-      "id": 13,
+      "id": "VLV-13",
       "check": "low-level-calls",
       "impact": "Informational",
       "file": "src/VulnerableVault.sol",
@@ -166,10 +214,13 @@
       ],
       "description": "Low level call in withdraw()",
       "category": "C",
-      "dev_note": "純資訊性提示（單純標註有低階呼叫），不構成獨立風險判斷，實際風險已由 #2 追蹤。"
+      "dev_note": "純資訊性提示（單純標註有低階呼叫），不構成獨立風險判斷，實際風險已由 #2 追蹤。",
+      "scan_id": 13,
+      "source": "tool",
+      "severity": "Informational"
     },
     {
-      "id": 14,
+      "id": "VLV-14",
       "check": "low-level-calls",
       "impact": "Informational",
       "file": "src/VulnerableVault.sol",
@@ -179,10 +230,13 @@
       ],
       "description": "Low level call in pickWinner()",
       "category": "C",
-      "dev_note": "同上，純資訊性提示，實際風險已由 #1 追蹤。"
+      "dev_note": "同上，純資訊性提示，實際風險已由 #1 追蹤。",
+      "scan_id": 14,
+      "source": "tool",
+      "severity": "Informational"
     },
     {
-      "id": 15,
+      "id": "VLV-15",
       "check": "low-level-calls",
       "impact": "Informational",
       "file": "src/VulnerableVault.sol",
@@ -192,10 +246,13 @@
       ],
       "description": "Low level call in batchPay()",
       "category": "C",
-      "dev_note": "同上，純資訊性提示，實際風險已由 #5/#8 追蹤。"
+      "dev_note": "同上，純資訊性提示，實際風險已由 #5/#8 追蹤。",
+      "scan_id": 15,
+      "source": "tool",
+      "severity": "Informational"
     },
     {
-      "id": 16,
+      "id": "VLV-16",
       "check": "low-level-calls",
       "impact": "Informational",
       "file": "src/VulnerableVault.sol",
@@ -205,10 +262,13 @@
       ],
       "description": "Low level call in safeWithdraw()",
       "category": "C",
-      "dev_note": "同上，純資訊性提示；safeWithdraw() 本身已確認安全（見 #11）。"
+      "dev_note": "同上，純資訊性提示；safeWithdraw() 本身已確認安全（見 #11）。",
+      "scan_id": 16,
+      "source": "tool",
+      "severity": "Informational"
     },
     {
-      "id": 17,
+      "id": "VLV-17",
       "check": "naming-convention",
       "impact": "Informational",
       "file": "src/VulnerableVault.sol",
@@ -217,10 +277,13 @@
       ],
       "description": "Parameter _paused is not in mixedCase",
       "category": "C",
-      "dev_note": "純命名風格建議，非安全問題。"
+      "dev_note": "純命名風格建議，非安全問題。",
+      "scan_id": 17,
+      "source": "tool",
+      "severity": "Informational"
     },
     {
-      "id": 18,
+      "id": "VLV-18",
       "check": "reentrancy-unlimited-gas",
       "impact": "Informational",
       "file": "src/VulnerableVault.sol",
@@ -230,10 +293,13 @@
       ],
       "description": "emergencyWithdraw() uses transfer() with a fixed 2300 gas stipend",
       "category": "C",
-      "dev_note": "純資訊性提示，onlyOwner 才能呼叫，非本次刻意植入的漏洞項目。"
+      "dev_note": "純資訊性提示，onlyOwner 才能呼叫，非本次刻意植入的漏洞項目。",
+      "scan_id": 18,
+      "source": "tool",
+      "severity": "Informational"
     },
     {
-      "id": 19,
+      "id": "VLV-19",
       "check": "immutable-states",
       "impact": "Optimization",
       "file": "src/VulnerableVault.sol",
@@ -242,12 +308,15 @@
       ],
       "description": "owner should be immutable",
       "category": "C",
-      "dev_note": "純 gas 優化建議，非安全問題。"
+      "dev_note": "純 gas 優化建議，非安全問題。",
+      "scan_id": 19,
+      "source": "tool",
+      "severity": "Informational"
     }
   ],
   "manual_findings": [
     {
-      "id": "M1",
+      "id": "VLV-20",
       "title": "onlyOwner modifier 的權限檢查恆為真",
       "severity": "Critical",
       "file": "src/VulnerableVault.sol",
@@ -258,10 +327,13 @@
       "description": "require(msg.sender == owner || true) 恆為真，onlyOwner 形同虛設 —— emergencyWithdraw()/topUpRewardPool()/batchPay() 實際上任何人皆可呼叫",
       "category": "A",
       "dev_note": "人工複核發現（VULNERABILITY_CATALOG.md V3，Slither 漏報）：權限檢查實作邏輯錯誤，屬語意層級問題，靜態分析無對應 detector，需修復。",
-      "scenario": "L1"
+      "scenario": "L1",
+      "scan_id": null,
+      "source": "manual",
+      "remediation": "（遷移佔位：需補修復建議）"
     },
     {
-      "id": "M2",
+      "id": "VLV-21",
       "title": "creditBonus() 完全沒有存取控制",
       "severity": "Critical",
       "file": "src/VulnerableVault.sol",
@@ -272,10 +344,13 @@
       "description": "任何人可呼叫 creditBonus() 幫任意地址無限加值 balances，再透過 withdraw() 提走合約內全部資金",
       "category": "A",
       "dev_note": "人工複核發現（VULNERABILITY_CATALOG.md V6，Slither 漏報）：應受保護的函式完全缺少存取控制，工具無「此函式該保護而未保護」的判斷能力，需修復。",
-      "scenario": "L2"
+      "scenario": "L2",
+      "scan_id": null,
+      "source": "manual",
+      "remediation": "（遷移佔位：需補修復建議）"
     },
     {
-      "id": "M3",
+      "id": "VLV-22",
       "title": "swap() 無滑點保護與 deadline",
       "severity": "Medium",
       "file": "src/VulnerableVault.sol",
@@ -286,10 +361,13 @@
       "description": "依 oracle 即時報價成交，無 minTokenOut/deadline 參數，可被搶跑（front-run）",
       "category": "A",
       "dev_note": "人工複核發現（VULNERABILITY_CATALOG.md V8，Slither 漏報）：經濟層級攻擊面，純商業邏輯問題，需修復。",
-      "scenario": "L4"
+      "scenario": "L4",
+      "scan_id": null,
+      "source": "manual",
+      "remediation": "（遷移佔位：需補修復建議）"
     },
     {
-      "id": "M4",
+      "id": "VLV-23",
       "title": "paused 旗標未被任何函式檢查",
       "severity": "Medium",
       "file": "src/VulnerableVault.sol",
@@ -299,7 +377,11 @@
       "description": "adminSetPaused() 會寫入 paused，但 deposit()/withdraw()/safeWithdraw()/swap() 皆未檢查該旗標，暫停機制形同裝飾，事故應變時無法實際凍結資金流",
       "category": "A",
       "dev_note": "人工複核發現（不在 VULNERABILITY_CATALOG.md 原始漏洞地圖中，為分類複核時的新發現）：業務邏輯缺陷，需修復並補進漏洞地圖。",
-      "scenario": "L3"
+      "scenario": "L3",
+      "scan_id": null,
+      "source": "manual",
+      "remediation": "（遷移佔位：需補修復建議）"
     }
-  ]
+  ],
+  "scope_exclusion_reasons": {}
 }

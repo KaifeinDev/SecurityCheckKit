@@ -30,6 +30,7 @@ Exit codes (gate semantics, propagated by report.py / cli.py):
 import argparse
 import json
 import os
+import re
 import sys
 from collections import OrderedDict
 
@@ -51,6 +52,30 @@ DEFAULT_STATUS = "待處理"
 # Medium, Critical, ...) everywhere in the report — not translated — so a
 # client rescan's raw output can be correlated line-by-line against this
 # document without a translation table in between.
+# The industry-standard severity scale the delivery report presents. Distinct
+# from `impact`, which stays verbatim-equal to Slither's own output and is the
+# ONLY field the delivery gate reads — a human downgrade changes how a finding
+# is presented but must never make a Slither High disappear from the gate's
+# view. See references/severity_grading.md.
+INDUSTRY_SEVERITIES = ["Critical", "High", "Medium", "Low", "Informational"]
+INDUSTRY_SEVERITY_RANK = {s: i for i, s in enumerate(INDUSTRY_SEVERITIES)}
+# Slither impact -> the industry severity it is considered equivalent to, for
+# the sole purpose of detecting a human DOWNGRADE (which requires a rationale).
+# An upgrade (e.g. Slither Low -> our High) needs no rationale: raising the
+# stakes is never the direction abuse comes from.
+IMPACT_AS_INDUSTRY = {
+    "High": "High",
+    "Medium": "Medium",
+    "Low": "Low",
+    "Informational": "Informational",
+    "Optimization": "Informational",
+}
+# Findings carry one unified id across both sources; `scan_id` keeps the
+# original scan-order index for rescan matching and is deliberately never
+# rendered into the report.
+VALID_SOURCES = {"tool", "manual"}
+FINDING_ID_RE = re.compile(r"^[A-Z]{2,6}-\d{2,}$")
+
 VALID_CATEGORIES = {"A", "B", "C", "D"}
 # B/C are the only categories a suppression comment may back (see the A/D
 # "不得抑制" rule in render_standards_appendix) — the same dev_note field is
@@ -113,6 +138,118 @@ def fingerprint(check, file, lines):
     return (check, file, min(lines) if lines else None)
 
 
+def validate_common_fields(entry, ident, expected_source, tool_impact=None):
+    """Validate the fields shared by findings[] and manual_findings[] entries.
+
+    `tool_impact` is the scan output's impact for tool findings (None for
+    manual ones, which have no tool opinion to be measured against). Returns a
+    list of error strings; an empty list means the entry passed.
+    """
+    errors = []
+
+    ident_value = entry.get("id")
+    if not isinstance(ident_value, str) or not FINDING_ID_RE.match(ident_value):
+        errors.append(
+            f"{ident} 的 id 格式無效：{ident_value!r}（應為 <專案縮寫大寫>-<兩位數以上編號>，例如 BGT-01）。"
+        )
+
+    source = entry.get("source")
+    if source not in VALID_SOURCES:
+        errors.append(f"{ident} 的 source 值無效：{source!r}（只接受 {'/'.join(sorted(VALID_SOURCES))}）。")
+    elif source != expected_source:
+        errors.append(
+            f"{ident} 的 source 是 {source!r}，但它出現在 "
+            f"{'findings[]' if expected_source == 'tool' else 'manual_findings[]'} 裡 —— "
+            f"應為 {expected_source!r}。"
+        )
+
+    severity = entry.get("severity")
+    if severity not in INDUSTRY_SEVERITY_RANK:
+        errors.append(
+            f"{ident} 的 severity 值無效：{severity!r}（必填，只接受 {'/'.join(INDUSTRY_SEVERITIES)}）。"
+        )
+    elif tool_impact is not None:
+        # A downgrade relative to the tool's own opinion is the direction that
+        # needs justifying: the gate reads `impact`, so a downgrade cannot open
+        # the gate, but it does change what the client is shown.
+        tool_equivalent = IMPACT_AS_INDUSTRY.get(tool_impact)
+        if tool_equivalent is not None and INDUSTRY_SEVERITY_RANK[severity] > INDUSTRY_SEVERITY_RANK[tool_equivalent]:
+            if not (entry.get("severity_rationale") or "").strip():
+                errors.append(
+                    f"{ident} 把工具判定的 {tool_impact} 降為 {severity}，但沒有 severity_rationale —— "
+                    "降級必須附理由（報告會並列印出兩個等級，理由是甲方唯一能檢視這個判斷的依據）。"
+                )
+
+    category = entry.get("category")
+    if category == "A" and not (entry.get("remediation") or "").strip():
+        errors.append(f"{ident} 分類為 A（已確認需修復）但沒有 remediation —— A 類必須寫出怎麼修。")
+    if category == "D":
+        for field, label in (
+            ("confirm_what", "要確認什麼"),
+            ("confirm_who", "問誰"),
+            ("confirm_branches", "兩種答案各自怎麼做"),
+        ):
+            if not (entry.get(field) or "").strip():
+                errors.append(f"{ident} 分類為 D（待確認）但沒有 {field}（{label}）—— D 類不得停在問句。")
+
+    return errors
+
+
+def validate_finding_ids(classification):
+    """Findings share one id sequence across both sources, so uniqueness has to
+    be checked where both lists are visible at once."""
+    errors = []
+    seen = {}
+    for key in ("findings", "manual_findings"):
+        for entry in classification.get(key, []):
+            ident_value = entry.get("id")
+            if not isinstance(ident_value, str):
+                continue  # format already reported by validate_common_fields
+            if ident_value in seen:
+                errors.append(
+                    f"id {ident_value!r} 重複出現（{seen[ident_value]} 與 {key}）—— "
+                    "掃描發現與人工發現共用同一組編號序列，不得重複。"
+                )
+            else:
+                seen[ident_value] = key
+    return errors
+
+
+def validate_top_level_keys(classification, known_ids):
+    """Validate the two optional top-level keys the redesigned report consumes."""
+    errors = []
+
+    coverage = classification.get("scenario_coverage")
+    if coverage is not None:
+        if not isinstance(coverage, dict) or not isinstance(coverage.get("contracts"), list):
+            errors.append("scenario_coverage 格式錯誤：應為 {\"contracts\": [...]}。")
+        else:
+            for i, row in enumerate(coverage["contracts"]):
+                where = f"scenario_coverage.contracts[{i}]"
+                if not isinstance(row, dict) or not isinstance(row.get("file"), str):
+                    errors.append(f"{where} 缺少 file（字串）。")
+                    continue
+                for field in ("checked", "not_applicable", "hits"):
+                    value = row.get(field, [])
+                    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                        errors.append(f"{where} 的 {field} 應為字串陣列。")
+                for hit in row.get("hits", []) or []:
+                    if isinstance(hit, str) and hit not in known_ids:
+                        errors.append(
+                            f"{where} 的 hits 列出 {hit!r}，但沒有這個編號的發現 —— "
+                            "覆蓋矩陣的命中必須指向實際存在的 finding id。"
+                        )
+
+    reasons = classification.get("scope_exclusion_reasons")
+    if reasons is not None:
+        if not isinstance(reasons, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in reasons.items()
+        ):
+            errors.append("scope_exclusion_reasons 格式錯誤：應為 {\"<排除路徑前綴>\": \"<理由>\"} 的字串對字串。")
+
+    return errors
+
+
 def reconcile(scan_list, classification):
     """Match classification.json findings 1:1 against the scan output.
 
@@ -153,7 +290,24 @@ def reconcile(scan_list, classification):
         if category in ("B", "C") and not (entry.get("dev_note") or "").strip():
             errors.append(f"{ident} 分類為 {category} 但沒有 dev_note —— B/C 是抑制的依據，必須附具體理由。")
 
-        matched[idx] = {"id": entry.get("id"), "category": category, "dev_note": entry.get("dev_note")}
+        errors += validate_common_fields(entry, ident, "tool", tool_impact=scan_f["impact"])
+
+        matched[idx] = {
+            "id": entry.get("id"),
+            "scan_id": entry.get("scan_id"),
+            "source": entry.get("source"),
+            "category": category,
+            "dev_note": entry.get("dev_note"),
+            "severity": entry.get("severity"),
+            "severity_rationale": entry.get("severity_rationale"),
+            "remediation": entry.get("remediation"),
+            "confirm_what": entry.get("confirm_what"),
+            "confirm_who": entry.get("confirm_who"),
+            "confirm_branches": entry.get("confirm_branches"),
+            "status": entry.get("status"),
+            "auto_classified": entry.get("auto_classified"),
+            "carried_from_previous": entry.get("carried_from_previous"),
+        }
 
     effective = []
     for idx, f in enumerate(scan_list):
@@ -162,6 +316,23 @@ def reconcile(scan_list, classification):
         e["id"] = m.get("id")
         e["category"] = m.get("category")
         e["dev_note"] = m.get("dev_note")
+        for field in (
+            "scan_id",
+            "source",
+            "severity",
+            "severity_rationale",
+            "remediation",
+            "confirm_what",
+            "confirm_who",
+            "confirm_branches",
+            "auto_classified",
+            "carried_from_previous",
+        ):
+            e[field] = m.get(field)
+        # `status` is already read off the classification entry elsewhere in the
+        # renderers via .get("status"); keep it on the effective dict too so an
+        # unclassified finding doesn't inherit a stale value from the scan JSON.
+        e["status"] = m.get("status")
         effective.append(e)
     return effective, errors
 
@@ -206,9 +377,10 @@ def validate_manual_findings(classification):
     manual = []
     for m in classification.get("manual_findings", []):
         ident = f"classification.json manual_findings id={m.get('id')}"
-        severity = m.get("severity")
-        if severity not in MANUAL_SEVERITIES:
-            errors.append(f"{ident} 的 severity 值無效：{severity!r}（只接受 {'/'.join(sorted(MANUAL_SEVERITIES))}）。")
+        # severity is validated by validate_common_fields against the same set
+        # (INDUSTRY_SEVERITIES == MANUAL_SEVERITIES); manual findings have no
+        # tool impact to compare against, so no downgrade check applies.
+        errors += validate_common_fields(m, ident, "manual")
         category = m.get("category")
         if category not in MANUAL_CATEGORIES:
             errors.append(
@@ -745,6 +917,14 @@ def main() -> None:
         effective, errors = reconcile(scan_list, classification)
         manual, manual_errors = validate_manual_findings(classification)
         errors += manual_errors
+        errors += validate_finding_ids(classification)
+        known_ids = {
+            e.get("id")
+            for key in ("findings", "manual_findings")
+            for e in classification.get(key, [])
+            if isinstance(e.get("id"), str)
+        }
+        errors += validate_top_level_keys(classification, known_ids)
     else:
         effective = [dict(f, id=None, category=None, dev_note=None) for f in scan_list]
 
