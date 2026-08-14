@@ -10,6 +10,10 @@ Writes into --out-dir:
     results_raw.json             - unfiltered `slither --json` output
     results_before.json          - filtered (or a copy of raw, if --full-audit)
     scan_env.json                - toolchain/version info for the report
+    scope.json                   - the project's own .sol files with line count
+                                   and sha256, plus the --exclude-path removals:
+                                   what the report states as its scope, so the
+                                   boundary of the self-check is on the record
     classification_skeleton.json - Step 2 starting point: every finding
                                    prefilled (id/check/impact/file/lines/
                                    description), category + dev_note left
@@ -27,6 +31,7 @@ so a human can eyeball findings before running the classification step.
 """
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import subprocess
@@ -35,6 +40,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from env_check import gather_scan_env  # noqa: E402
 from filter_results import extract_findings, is_own_finding, is_excluded, _fallback_location  # noqa: E402
+from build_report import IMPACT_AS_INDUSTRY  # noqa: E402
 
 
 # Detectors that report code-style/readability observations rather than
@@ -60,7 +66,68 @@ STYLE_DEV_NOTE = (
 )
 
 
-def build_classification_skeleton(before_json, auto_style=True):
+def _default_id_prefix(project_dir):
+    """Finding ids need a stable per-project prefix; the directory name is the
+    only project identity scan.py has. Non-alphabetic characters are dropped so
+    a name like `bot-gold-token` yields BOT rather than BO-."""
+    name = os.path.basename(os.path.abspath(project_dir))
+    letters = "".join(ch for ch in name if ch.isalpha()).upper()
+    return (letters[:3] or "PRJ")
+
+
+def collect_scope(project_dir, src_prefixes, exclude_paths):
+    """Enumerate the project's own .sol files with line count and content hash.
+
+    This is what the report's scope section states to the client: a self-check
+    proof with no stated boundary proves nothing, and --exclude-path removals
+    were previously invisible in the delivered document.
+
+    Deliberately unaffected by --full-audit: that flag widens which *findings*
+    are kept, but the scope section answers "which of YOUR files did we scan",
+    not "how many files did crytic-compile parse".
+    """
+    # Guard against a bare string being passed where a list is expected: it
+    # would iterate per character, and a "/" character becomes an absolute
+    # root path that walks the whole filesystem.
+    if isinstance(src_prefixes, str):
+        src_prefixes = [src_prefixes]
+    if isinstance(exclude_paths, str):
+        exclude_paths = [exclude_paths]
+    prefixes = [p.lstrip("/") for p in (src_prefixes or ["src/"]) if p.strip("/")]
+    prefixes = [p if p.endswith("/") else p + "/" for p in prefixes] or ["src/"]
+    excludes = [p if p.endswith("/") else p + "/" for p in (exclude_paths or [])]
+    files = []
+    total_lines = 0
+    for prefix in prefixes:
+        root = os.path.join(project_dir, prefix)
+        for dirpath, _dirnames, filenames in os.walk(root):
+            for name in filenames:
+                if not name.endswith(".sol"):
+                    continue
+                abs_path = os.path.join(dirpath, name)
+                rel = os.path.relpath(abs_path, project_dir)
+                if any(rel.startswith(x) for x in excludes):
+                    continue
+                try:
+                    with open(abs_path, "rb") as fh:
+                        blob = fh.read()
+                except OSError:
+                    continue
+                lines = blob.count(b"\n") + (1 if blob and not blob.endswith(b"\n") else 0)
+                files.append(
+                    {"path": rel, "lines": lines, "sha256": hashlib.sha256(blob).hexdigest()}
+                )
+                total_lines += lines
+    files.sort(key=lambda f: f["path"])
+    return {
+        "src_prefix": prefixes,
+        "exclude_paths": excludes,
+        "files": files,
+        "totals": {"files": len(files), "lines": total_lines},
+    }
+
+
+def build_classification_skeleton(before_json, auto_style=True, id_prefix="PRJ"):
     """Prefill classification.json's findings[] straight from the scan output,
     leaving only the two human fields (category, dev_note) empty. Lines are
     collapsed to [min, max] — the same shape the reconciliation in
@@ -74,21 +141,36 @@ def build_classification_skeleton(before_json, auto_style=True):
     for i, f in enumerate(extract_findings(before_json), start=1):
         lines = f["lines"]
         entry = {
-            "id": i,
+            "id": f"{id_prefix}-{i:02d}",
+            "scan_id": i,
+            "source": "tool",
             "check": f["check"],
             "impact": f["impact"],
+            # Pre-filled to the tool's own equivalent, so leaving it alone is
+            # never a downgrade and never needs a rationale. Raising or lowering
+            # it is the human's call in Step 2.
+            "severity": IMPACT_AS_INDUSTRY.get(f["impact"], "Informational"),
+            "severity_rationale": "",
             "file": f["file"],
             "lines": [min(lines), max(lines)] if lines else [],
             "description": f["description"].replace("\n", " "),
             "category": "",
             "dev_note": "",
+            "remediation": "",
         }
         if auto_style and f["check"] in STYLE_ONLY_CHECKS:
             entry["category"] = "C"
             entry["dev_note"] = STYLE_DEV_NOTE.format(check=f["check"])
             entry["auto_classified"] = "style"
         skeleton_findings.append(entry)
-    return {"findings": skeleton_findings, "manual_findings": []}
+    return {
+        "findings": skeleton_findings,
+        "manual_findings": [],
+        # Both are consumed by the report's scope / scenario-coverage sections;
+        # present-but-empty so Step 2 sees they exist and need filling.
+        "scenario_coverage": {"contracts": []},
+        "scope_exclusion_reasons": {},
+    }
 
 
 def carry_over_classifications(skeleton, prev):
@@ -224,6 +306,11 @@ def main() -> None:
              "unindexed-event-address) as C; leave every finding for manual classification.",
     )
     parser.add_argument(
+        "--id-prefix",
+        help="Uppercase project abbreviation for finding ids (e.g. BGT -> BGT-01). "
+             "Defaults to the first three letters of the project directory name.",
+    )
+    parser.add_argument(
         "--prev-classification",
         help="Path to a previous run's classification.json: findings that match "
              "(check + file + start line, with a conservative check+file fallback "
@@ -239,6 +326,7 @@ def main() -> None:
     before_path = os.path.join(args.out_dir, "results_before.json")
     env_path = os.path.join(args.out_dir, "scan_env.json")
     skeleton_path = os.path.join(args.out_dir, "classification_skeleton.json")
+    scope_path = os.path.join(args.out_dir, "scope.json")
 
     print(f"running slither in {os.path.abspath(args.project_dir)} ...")
     run_slither(args.project_dir, raw_path)
@@ -263,7 +351,14 @@ def main() -> None:
     with open(env_path, "w", encoding="utf-8") as f:
         json.dump(env, f, ensure_ascii=False, indent=2)
 
-    skeleton = build_classification_skeleton(data, auto_style=not args.no_auto_style)
+    scope = collect_scope(args.project_dir, src_prefixes, args.exclude_path)
+    with open(scope_path, "w", encoding="utf-8") as f:
+        json.dump(scope, f, ensure_ascii=False, indent=2)
+
+    id_prefix = args.id_prefix or _default_id_prefix(args.project_dir)
+    skeleton = build_classification_skeleton(
+        data, auto_style=not args.no_auto_style, id_prefix=id_prefix
+    )
     carry_stats = None
     if args.prev_classification:
         with open(args.prev_classification, encoding="utf-8") as f:
@@ -276,10 +371,14 @@ def main() -> None:
     for d in kept:
         counts[d.get("impact", "Unknown")] = counts.get(d.get("impact", "Unknown"), 0) + 1
 
-    scope = "all findings (--full-audit)" if args.full_audit else f"prefixes {src_prefixes}"
+    scope_desc = "all findings (--full-audit)" if args.full_audit else f"prefixes {src_prefixes}"
     if args.exclude_path:
-        scope += f", excluding {args.exclude_path}"
-    print(f"kept {len(kept)}/{len(detectors)} findings ({scope})")
+        scope_desc += f", excluding {args.exclude_path}"
+    print(f"kept {len(kept)}/{len(detectors)} findings ({scope_desc})")
+    print(
+        f"scope: {scope['totals']['files']} files / {scope['totals']['lines']} lines"
+        + (f", excluded {args.exclude_path}" if args.exclude_path else "")
+    )
     print("by impact:", counts)
 
     auto_styled = [f for f in skeleton["findings"] if f.get("auto_classified") == "style"]
