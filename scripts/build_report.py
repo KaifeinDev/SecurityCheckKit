@@ -715,9 +715,13 @@ def render_finding_detail(item):
     rows = [
         ("嚴重度", sev_cell),
         ("處置", CATEGORY_LABEL.get(item.get("category"), str(item.get("category")))),
-        ("狀態", item.get("status") or DEFAULT_STATUS),
-        ("位置", f"`{item_location(item)}`"),
     ]
+    # Remediation progress only means something for items that still need
+    # action. B and C are permanent determinations — printing "待處理" next to a
+    # false positive reads as an outstanding task that will never be done.
+    if item.get("category") in ("A", "D", None):
+        rows.append(("狀態", item.get("status") or DEFAULT_STATUS))
+    rows.append(("位置", f"`{item_location(item)}`"))
     if item.get("scenario"):
         rows.append(("命中情境", item["scenario"]))
     out = [f"### {item.get('id')}｜{item_title(item)}", ""]

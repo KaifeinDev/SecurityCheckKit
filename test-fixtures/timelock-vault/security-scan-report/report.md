@@ -136,7 +136,6 @@
 |---|---|
 | 嚴重度 | Low |
 | 處置 | 已知風險但可接受（B） |
-| 狀態 | 待處理 |
 | 位置 | `src/TimelockVault.sol:38-43` |
 
 **說明**：unlockAt[msg.sender] 在每次 deposit() 時整筆覆寫為 block.timestamp + LOCK_PERIOD（L41），代表使用者加碼 1 wei 就會把既有全部餘額重新鎖 7 天。若前端或第三方合約代使用者存入，可能造成非預期的延長鎖倉。
