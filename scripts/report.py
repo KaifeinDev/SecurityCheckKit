@@ -19,6 +19,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import sys
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -92,11 +93,21 @@ def main() -> None:
         os.path.dirname(os.path.abspath(args.out_dir)), "audit", "worksheet.md"
     )
     build_cmd += ["--worksheet", worksheet]
-    # build_report.py draws the severity chart, whose CJK labels need the same
-    # font the PDF body gets. It has no --font flag of its own and resolves
-    # fonts via find_cjk_font(), which reads $SECURITY_SCAN_CJK_FONT first —
-    # so forward --font that way rather than only handing it to md_to_pdf.py,
-    # otherwise --font silently fixes the text and leaves the chart as tofu.
+    # The worksheet carries internal-voice notes and the full per-finding dump.
+    # If its directory is tracked, it ships with the client's code. Warn only —
+    # .gitignore belongs to the client's project, not to this kit.
+    worksheet_dir = os.path.dirname(os.path.abspath(worksheet))
+    os.makedirs(worksheet_dir, exist_ok=True)
+    if subprocess.run(
+        ["git", "check-ignore", "-q", worksheet],
+        cwd=worksheet_dir,
+        capture_output=True,
+    ).returncode != 0:
+        print(
+            f"警告：{worksheet} 未被 gitignore —— 工作底稿含內部語氣與全量明細，"
+            "不應隨程式碼交付給甲方。請把該目錄加進專案的 .gitignore。",
+            file=sys.stderr,
+        )
     build_env = dict(os.environ)
     if args.font:
         build_env["SECURITY_SCAN_CJK_FONT"] = args.font
@@ -119,6 +130,7 @@ def main() -> None:
     if args.font_bold:
         pdf_cmd += ["--font-bold", args.font_bold]
     subprocess.run(pdf_cmd, check=True)
+    print(f"wrote {pdf_path}")
     raise SystemExit(gate_code)
 
 
