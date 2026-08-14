@@ -2,7 +2,7 @@
 standalone without Claude Code.
 
 Usage:
-    python3 report.py --before b.json --after a.json --out-dir DIR \\
+    python3 report.py --before b.json --out-dir DIR \\
         [--classification c.json] [--env e.json] [--font path] [--skip-pdf]
 
 `--classification` / `--env` are optional (see build_report.py docstring for
@@ -58,9 +58,14 @@ def find_report_python() -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--before", required=True)
-    parser.add_argument("--after", required=True)
     parser.add_argument("--classification")
     parser.add_argument("--env")
+    parser.add_argument("--scope")
+    parser.add_argument("--overview")
+    parser.add_argument("--client")
+    parser.add_argument("--engagement-from")
+    parser.add_argument("--engagement-to")
+    parser.add_argument("--worksheet", help="Internal worksheet path; defaults to <project>/audit/worksheet.md")
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--font", help="Passed through to md_to_pdf.py")
     parser.add_argument("--font-bold", help="Passed through to md_to_pdf.py")
@@ -71,12 +76,22 @@ def main() -> None:
 
     build_cmd = [
         py, os.path.join(SCRIPTS_DIR, "build_report.py"),
-        "--before", args.before, "--after", args.after, "--out-dir", args.out_dir,
+        "--before", args.before, "--out-dir", args.out_dir,
     ]
     if args.classification:
         build_cmd += ["--classification", args.classification]
     if args.env:
         build_cmd += ["--env", args.env]
+    for flag in ("scope", "overview", "client", "engagement_from", "engagement_to"):
+        value = getattr(args, flag)
+        if value:
+            build_cmd += ["--" + flag.replace("_", "-"), value]
+    # The worksheet is an internal companion document, so it defaults NEXT TO
+    # the other internal notes (audit/) rather than into the delivery folder.
+    worksheet = args.worksheet or os.path.join(
+        os.path.dirname(os.path.abspath(args.out_dir)), "audit", "worksheet.md"
+    )
+    build_cmd += ["--worksheet", worksheet]
     # build_report.py draws the severity chart, whose CJK labels need the same
     # font the PDF body gets. It has no --font flag of its own and resolves
     # fonts via find_cjk_font(), which reads $SECURITY_SCAN_CJK_FONT first —

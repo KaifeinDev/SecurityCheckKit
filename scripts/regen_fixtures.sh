@@ -16,13 +16,9 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 : > "$OUT/exit_codes.txt"
 for f in timelock-vault vulnerable-vault; do
   SRC="$KIT/test-fixtures/$f/security-scan-report"
-  # vulnerable-vault never ran Step 3, so it has no results_after.json; fall
-  # back to results_before.json the way the skill documents for that case.
-  AFTER="$SRC/results_after.json"; [ -f "$AFTER" ] || AFTER="$SRC/results_before.json"
   mkdir -p "$OUT/$f"
   python3 "$KIT/scripts/cli.py" report \
     --before "$SRC/results_before.json" \
-    --after "$AFTER" \
     --classification "$SRC/classification.json" \
     --env "$SRC/scan_env.json" \
     --out-dir "$OUT/$f" --skip-pdf > "$OUT/$f/stdout.txt" 2> "$OUT/$f/stderr.txt"
