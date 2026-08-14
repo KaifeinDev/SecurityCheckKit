@@ -598,6 +598,7 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
     # their raw Slither impact might be High. Reset on every "## " (new major
     # section) and updated on every "### " category sub-heading.
     current_category = None
+    seen_section = False
 
     for line_idx, line in enumerate(lines):
         if line_idx in skip_line_indices:
@@ -633,6 +634,14 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
             para(heading_text, size=13, style="B", gap=8, color=COLOR_HEADING)
         elif stripped.startswith("## "):
             current_category = None
+            # Each top-level section starts on its own page (the layout the
+            # third-party audit reports this document is compared against use).
+            # The FIRST section is exempt: it follows the title block and the
+            # internal-draft banner, and breaking there leaves a near-empty
+            # sheet carrying nothing but the banner.
+            if seen_section:
+                pdf.add_page()
+            seen_section = True
             para(stripped[3:], size=15, style="B", gap=9, color=COLOR_HEADING)
             y = pdf.get_y()
             pdf.set_draw_color(*COLOR_HEADING)
@@ -668,6 +677,15 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
                 if sev_match:
                     color = finding_title_color(sev_match.group(1), current_category == "C")
             bullet(content, indent_mm=depth * 5, color=color)
+        elif stripped.startswith("<sub>"):
+            # The scope section prints per-file SHA-256 values as fine print:
+            # needed for the client to verify they received the scanned code,
+            # but not something that should compete with the body text.
+            clean = re.sub(r"</?(sub|br)\s*/?>", "", stripped).strip()
+            if clean:
+                para(clean, size=7, color=(120, 120, 120))
+            else:
+                pdf.ln(2)
         elif BANNER_RE.match(stripped):
             banner_box(BANNER_RE.match(stripped).group(1))
         else:

@@ -913,8 +913,7 @@ def main() -> None:
 **檢測期間**：{engagement}
 **受檢版本**：{(env or {}).get('git_commit') or 'N/A'}
 
-本次共提出 {total_items} 項發現（掃描工具產出 {len(effective)} 項、人工複核產出 {len(manual)} 項），
-依嚴重程度分布如下：
+本次共提出 {total_items} 項發現（掃描工具產出 {len(effective)} 項、人工複核產出 {len(manual)} 項），依嚴重程度分布如下：
 
 {render_severity_counts(effective, manual)}{render_classification_disclosure(effective)}
 需要決策或行動的項目彙整於「待處理項目」，逐筆說明見「發現明細」。
