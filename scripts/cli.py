@@ -6,11 +6,14 @@ Code required.
 Subcommands (each maps 1:1 to a SKILL.md step):
     check   Step 0 - environment health check
     scan    Step 1 - run Slither, filter to project source, collect env info
-    report  Step 4 - build report.md + report.pdf from scan/classification artifacts
+    review  Step 2 - lint classification.json for the things a machine can check
+    report  Step 3 - build report.md + report.pdf from scan/classification artifacts
 
-Step 2 (A/B/C/D classification) and Step 3 (suppression comments) stay a
-human-confirmed step by design (see references/pitfalls.md and SKILL.md) —
-there is deliberately no subcommand for them here.
+The A/B/C/D judgement itself (Step 2) stays human-confirmed by design (see
+references/pitfalls.md and SKILL.md); `review` covers only the mechanical part
+of it — duplicated justifications, missing required fields, High findings that
+were downgraded or dismissed. Suppression comments are an optional CI-hygiene
+follow-up, not a numbered step, and have no subcommand.
 
 Run `python3 cli.py <subcommand> --help` for each step's own options.
 """
@@ -23,6 +26,7 @@ SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 SUBCOMMANDS = {
     "check": "env_check.py",
     "scan": "scan.py",
+    "review": "review.py",
     "report": "report.py",
 }
 
