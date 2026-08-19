@@ -153,7 +153,12 @@ def build_classification_skeleton(before_json, auto_style=True, id_prefix="PRJ")
             "severity_rationale": "",
             "file": f["file"],
             "lines": [min(lines), max(lines)] if lines else [],
-            "description": f["description"].replace("\n", " "),
+            # Kept verbatim, newlines and all. Slither indents its descriptions
+            # into sections ("External calls:", "State variables written after
+            # the call(s):", ...) and flattening them to one line is what turns
+            # a reentrancy finding into an unreadable 8000-character paragraph.
+            # The report renderer needs that structure to lay the finding out.
+            "description": f["description"],
             "category": "",
             "dev_note": "",
             "remediation": "",

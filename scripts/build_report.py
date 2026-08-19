@@ -553,7 +553,10 @@ def item_location(item):
 
 
 def item_title(item):
-    return item.get("title") or item.get("check") or (item.get("description") or "")[:60]
+    # Lands in markdown table cells and "###" headings, so it has to stay on
+    # one line — descriptions keep Slither's own line breaks now.
+    desc = " ".join((item.get("description") or "").split())
+    return item.get("title") or item.get("check") or desc[:60]
 
 
 def render_severity_counts(effective, manual):
@@ -706,6 +709,137 @@ def is_detailed(item):
     return item.get("severity") in DETAILED_SEVERITIES
 
 
+# Slither ends a reentrancy description with, for every state variable it
+# touched, the full roster of other functions that variable is reachable from.
+# On a contract the size of LoanManager that enumeration is ~85% of the
+# description's bytes and repeats the same handful of names once per variable.
+# It identifies the variable's blast radius, not the bug; the reader needs the
+# external call and the write that follows it, which sit in the first few
+# lines. Collapse each roster to its size and keep everything else verbatim.
+XFUNC_HEADER_RE = re.compile(r"can be used in cross function reentrancies:$")
+# Cap for descriptions that arrive already flattened to a single line — older
+# classification.json files written before scan.py stopped collapsing newlines.
+# Nothing can be re-segmented out of those reliably (Slither's own item
+# separator, " - ", also occurs inside expressions like `dueDate_ - startDate_`),
+# so the honest fallback is to truncate and point at the raw scan output.
+FLAT_DESCRIPTION_CAP = 600
+# A section keeps every item up to MAX_SECTION_ITEMS; past that it shows the
+# first KEEP_SECTION_ITEMS and reports how many were left out. Sized so the
+# lists that carry meaning (the state variables written after an external call
+# — typically a handful) survive intact, while the roster-shaped ones (every
+# file sharing a pragma) collapse.
+MAX_SECTION_ITEMS = 8
+KEEP_SECTION_ITEMS = 5
+
+
+def format_description(desc: str) -> list[str]:
+    """Render a Slither description as readable markdown lines.
+
+    Slither descriptions are indented trees whose leaves are often rosters —
+    every file sharing a pragma, every function a state variable is reachable
+    from. The parent line already says what the group is, so past a handful of
+    entries the members stop informing and start burying the finding: the
+    reentrancy description for a large contract runs to 8000 characters, ~85%
+    of it those rosters. Long lists are replaced by their size with a pointer
+    to the raw scan output; short ones are kept whole.
+
+    Indentation depth is deliberately not used to decide this — Slither is not
+    consistent about it (pragma nests its file list one level deeper than
+    solc-version does), so the rule is the size of the list, which behaves the
+    same for every detector.
+
+    Returns a list of markdown lines so callers can splice them into the
+    section they are building."""
+    desc = (desc or "").rstrip()
+    if not desc.strip():
+        return []
+
+    if "\n" not in desc:
+        desc = desc.strip()
+        if len(desc) <= FLAT_DESCRIPTION_CAP:
+            return [f"**說明**：{desc}", ""]
+        return [
+            f"**說明**：{desc[:FLAT_DESCRIPTION_CAP].rstrip()}……",
+            "",
+            f"（原始描述共 {len(desc)} 字元，此處截斷；完整內容見掃描原始輸出。"
+            "此筆的 classification.json 產生時描述仍被壓成單行，"
+            "重新產生分類表即可還原分段。）",
+            "",
+        ]
+
+    head = []
+    sections = OrderedDict()          # section header -> [items]
+    current = None                    # section the next item belongs to
+    roster = None                     # (variable, [entries]) being collected
+    reachable = OrderedDict()         # state variable -> reachable function count
+
+    def close_roster(trailing_write=None):
+        """Slither interleaves reentrancy information: each state-variable write
+        is followed by that variable's roster, then the next write. Entries and
+        writes carry identical indentation, so the only reliable boundary is
+        that a write always sits immediately before the next roster header —
+        that line is handed back here so it is recorded as the write it is
+        rather than counted as roster noise."""
+        nonlocal roster
+        if roster is None:
+            return
+        var, entries = roster
+        kept = [e for e in entries if e is not trailing_write]
+        reachable[var] = reachable.get(var, 0) + len(kept)
+        roster = None
+
+    for raw in desc.split("\n"):
+        if not raw.strip():
+            continue
+        line = raw.strip()
+        is_item = line.startswith("-")
+        item = line.lstrip("-").strip() if is_item else line
+
+        if XFUNC_HEADER_RE.search(line):
+            trailing = roster[1][-1] if (roster and roster[1]) else None
+            close_roster(trailing_write=trailing)
+            if trailing is not None and current is not None:
+                sections[current].append(trailing)
+            var = XFUNC_HEADER_RE.sub("", line).strip()
+            var = re.sub(r"\s*\([^()]*#[^()]*\)\s*$", "", var).strip()
+            roster = (var, [])
+            continue
+
+        if roster is not None and is_item:
+            roster[1].append(item)
+            continue
+
+        close_roster()
+        if item.endswith(":"):
+            current = item
+            sections.setdefault(current, [])
+        elif is_item and current is not None:
+            sections[current].append(item)
+        else:
+            head.append(item)
+
+    close_roster()
+
+    out = ["**說明**：", ""]
+    out += [f"- {h}" for h in head]
+    for header, items in sections.items():
+        out.append(f"- {header}")
+        # Slither repeats a write verbatim once per state variable it touches
+        # (an event emission covering three variables is listed three times).
+        items = list(OrderedDict.fromkeys(items))
+        shown = items if len(items) <= MAX_SECTION_ITEMS else items[:KEEP_SECTION_ITEMS]
+        out += [f"  - {i}" for i in shown]
+        if len(shown) < len(items):
+            out.append(f"  - （其餘 {len(items) - len(shown)} 項省略，清單見掃描原始輸出）")
+    if reachable:
+        names = "、".join(reachable)
+        out.append(
+            f"- 可跨函式重入的狀態變數共 {len(reachable)} 個（{names}），"
+            f"合計可達函式 {sum(reachable.values())} 處；完整清單見掃描原始輸出。"
+        )
+    out.append("")
+    return out
+
 def render_finding_detail(item):
     sev = item.get("severity")
     impact = item.get("impact")
@@ -730,9 +864,7 @@ def render_finding_detail(item):
     out.append("")
     if item.get("severity_rationale"):
         out += [f"**嚴重度調整理由**：{item['severity_rationale']}", ""]
-    desc = (item.get("description") or "").replace("\n", " ").strip()
-    if desc:
-        out += [f"**說明**：{desc}", ""]
+    out += format_description(item.get("description"))
     note = (item.get("dev_note") or "").strip()
     if note:
         out += [f"**判斷依據**：{note}", ""]

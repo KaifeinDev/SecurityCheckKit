@@ -68,10 +68,15 @@ def extract_findings(results_json: dict | None) -> list[dict]:
             "impact": d.get("impact", "Informational"),
             "file": file,
             "lines": lines,
-            # Slither descriptions embed tabs/newlines for terminal output;
-            # collapse them — they break markdown tables and CJK fonts have
-            # no glyph for \t.
-            "description": " ".join((d.get("description") or "").split()),
+            # Kept verbatim. Slither indents these into sections ("External
+            # calls:", "State variables written after the call(s):", ...) and
+            # collapsing them to one line is what turns a reentrancy finding
+            # into an unreadable 8000-character paragraph — the report renderer
+            # needs the structure to lay the finding out and to fold the long
+            # rosters away. Consumers that need one line (markdown table cells,
+            # headings) flatten locally; md_to_pdf maps the tabs to spaces,
+            # which is what the CJK-font concern here was actually about.
+            "description": (d.get("description") or "").strip(),
         })
     return findings
 
