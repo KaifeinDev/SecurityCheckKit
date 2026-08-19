@@ -278,6 +278,10 @@ def reconcile(scan_list, classification):
             "dev_note": entry.get("dev_note"),
             "severity": entry.get("severity"),
             "severity_rationale": entry.get("severity_rationale"),
+            "title": entry.get("title"),
+            "explanation": entry.get("explanation"),
+            "impact_detail": entry.get("impact_detail"),
+            "proof_of_concept": entry.get("proof_of_concept"),
             "remediation": entry.get("remediation"),
             "confirm_what": entry.get("confirm_what"),
             "confirm_who": entry.get("confirm_who"),
@@ -299,6 +303,10 @@ def reconcile(scan_list, classification):
             "source",
             "severity",
             "severity_rationale",
+            "title",
+            "explanation",
+            "impact_detail",
+            "proof_of_concept",
             "remediation",
             "confirm_what",
             "confirm_who",
@@ -520,19 +528,24 @@ def render_pending_table(effective, manual, classification_provided):
     yet fixed) and D (not yet decided), from both sources."""
     if not classification_provided:
         return "_未提供分類資料（Step 2 未寫入 classification.json），無法列出總表。_\n"
-    rows = [i for i in all_items(effective, manual) if i.get("category") in ("A", "D", None)]
+    ordered = all_items(effective, manual)
+    # Labels must come from the same sequence the findings section numbers, or
+    # the table and the detail headings would disagree.
+    labels = assign_labels([i for i in ordered if is_detailed(i)])
+    rows = [i for i in ordered if i.get("category") in ("A", "D", None)]
     if not rows:
         return "本次無需要決策或處理的項目。\n"
     lines = [
         "**狀態欄位反映本次產出報告當下的處置進度**，尚未標註狀態的項目預設顯示「"
         + DEFAULT_STATUS
         + "」。\n",
-        "| 編號 | 標題 | 嚴重度 | 工具 impact | 處置 | 狀態 |",
-        "|---|---|---|---|---|---|",
+        "| 編號 | 掃描編號 | 標題 | 嚴重度 | 工具 impact | 處置 | 狀態 |",
+        "|---|---|---|---|---|---|---|",
     ]
     for i in rows:
+        label = labels.get(id(i))
         lines.append(
-            f"| {i.get('id') or '—'} | {item_title(i)} | {i.get('severity') or '—'} | "
+            f"| {('[' + label + ']') if label else '—'} | {i.get('id') or '—'} | {item_title(i)} | {i.get('severity') or '—'} | "
             f"{i.get('impact') or '—'} | {CATEGORY_LABEL.get(i.get('category'), i.get('category'))} | "
             f"{i.get('status') or DEFAULT_STATUS} |"
         )
@@ -700,6 +713,130 @@ CATEGORY_LABEL = {
 # high-severity findings.
 DETAILED_SEVERITIES = {"Critical", "High", "Medium"}
 
+# Cyfrin-style reading labels: severity letter + sequence within that severity
+# ([H-1], [M-2], ...). Deliberately DERIVED at render time rather than stored
+# in classification.json: the label encodes severity, and severity is a Step 2
+# human decision that can change — a stored one would silently go stale the
+# first time a finding is re-graded. Rescan matching and carry-over key on the
+# fingerprint (check + file + line), never on this, so deriving it is safe.
+SEVERITY_CODE = {
+    "Critical": "C",
+    "High": "H",
+    "Medium": "M",
+    "Low": "L",
+    "Informational": "I",
+}
+
+
+def is_real_finding(item):
+    """Whether a finding is presented as an actual problem, as opposed to one
+    that was examined and dismissed.
+
+    Only these carry a [S-#] label and the full Description / Impact / PoC /
+    Recommended Mitigation layout. A false positive dropped into the [H-n]
+    sequence would read as a confirmed High to anyone scanning the report —
+    the label is a claim about the finding, not just a bullet number."""
+    return item.get("source") == "manual" or item.get("category") in ("A", "D", None)
+
+
+CYFRIN_SECTIONS = (
+    # A finding's heading is "[S-#] TITLE"; with no authored title it falls back
+    # to the detector name ("reentrancy-eth"), which names the check rather than
+    # the problem — the format asks for root cause + impact in the title itself.
+    ("title", "標題"),
+    ("explanation", "說明"),
+    ("impact_detail", "影響"),
+    ("proof_of_concept", "攻擊情境／重現方式"),
+    ("remediation", "建議修法"),
+)
+
+
+def report_missing_sections(items, labels):
+    """List real findings whose Cyfrin-style sections are still empty.
+
+    A reminder rather than an error: the structure is being introduced over an
+    existing body of findings, so blocking the build would mean no report at
+    all until every one is written up. The report itself marks each gap 待補,
+    so nothing silently reads as complete."""
+    gaps = []
+    for item in items:
+        if not is_real_finding(item):
+            continue
+        present = dict(item)
+        present["explanation"] = finding_explanation(item)
+        missing = [
+            zh for field, zh in CYFRIN_SECTIONS
+            if not (present.get(field) or "").strip()
+            # D findings answer "what to confirm" instead of proposing a fix.
+            and not (field == "remediation" and item.get("category") == "D")
+        ]
+        if missing:
+            label = labels.get(id(item))
+            name = f"[{label}] " if label else ""
+            gaps.append(f"{name}{item.get('id') or '未編號'}：缺 {'、'.join(missing)}")
+    if gaps:
+        print(f"提醒：{len(gaps)} 項發現的說明欄位尚未填寫，報告中以「待補」標示：")
+        for g in gaps:
+            print(f"  - {g}")
+
+
+def finding_explanation(item):
+    """The human account of the problem.
+
+    Manual findings have no tool output — their `description` is already the
+    human write-up, so it serves as the explanation rather than being labelled
+    as something the scanner said."""
+    text = (item.get("explanation") or "").strip()
+    if text:
+        return text
+    if item.get("source") == "manual":
+        return (item.get("description") or "").strip()
+    return ""
+
+
+def tool_description(item):
+    """Slither's own words, or empty for a human-found issue."""
+    if item.get("source") == "manual":
+        return ""
+    return (item.get("description") or "").strip()
+
+
+REF_RE = re.compile(r"\b([A-Z]{2,6}-\d{2,})\b")
+
+
+def relabel_refs(text, id_to_label):
+    """Rewrite scan-id cross-references in human prose to the [S-#] labels.
+
+    Done at render time, never in classification.json. The label is derived
+    from severity, so it moves whenever a finding is re-graded or one is added
+    ahead of it — prose rewritten to "同 [M-1]" would keep pointing at [M-1]
+    after that slot became a different finding, and nothing would flag it.
+    Authors keep writing the stable ISL-02, and every build resolves it to
+    whatever that finding's label currently is.
+
+    Ids with no label (false positives, accepted risks) are left alone: those
+    findings keep their scan id as their heading, so the reference still lands.
+    """
+    if not text:
+        return text
+    return REF_RE.sub(
+        lambda m: f"[{id_to_label[m.group(1)]}]" if m.group(1) in id_to_label else m.group(0),
+        text,
+    )
+
+
+def assign_labels(items):
+    """Map id(item) -> "H-1" over the real findings, in the order given."""
+    seen = {}
+    labels = {}
+    for item in items:
+        if not is_real_finding(item):
+            continue
+        code = SEVERITY_CODE.get(item.get("severity"), "X")
+        seen[code] = seen.get(code, 0) + 1
+        labels[id(item)] = f"{code}-{seen[code]}"
+    return labels
+
 
 def is_detailed(item):
     if item.get("source") == "manual":
@@ -723,6 +860,13 @@ XFUNC_HEADER_RE = re.compile(r"can be used in cross function reentrancies:$")
 # separator, " - ", also occurs inside expressions like `dueDate_ - startDate_`),
 # so the honest fallback is to truncate and point at the raw scan output.
 FLAT_DESCRIPTION_CAP = 600
+# A section keeps every item up to MAX_SECTION_ITEMS; past that it shows the
+# first KEEP_SECTION_ITEMS and reports how many were left out. Sized so the
+# lists that carry meaning (the state variables written after an external call
+# — typically a handful) survive intact, while the roster-shaped ones (every
+# file sharing a pragma) collapse.
+MAX_SECTION_ITEMS = 8
+KEEP_SECTION_ITEMS = 5
 # A single item is one fact (one call site, one write), so it is kept whole
 # well past normal prose length — but a struct literal spanning a whole
 # constructor still has to stop somewhere.
@@ -731,15 +875,6 @@ MAX_ITEM_CHARS = 400
 # against the finished markdown so the invariant survives future renderers, not
 # just this one. See assert_no_raw_dump().
 MAX_VERBATIM_RUN = 500
-
-
-# A section keeps every item up to MAX_SECTION_ITEMS; past that it shows the
-# first KEEP_SECTION_ITEMS and reports how many were left out. Sized so the
-# lists that carry meaning (the state variables written after an external call
-# — typically a handful) survive intact, while the roster-shaped ones (every
-# file sharing a pragma) collapse.
-MAX_SECTION_ITEMS = 8
-KEEP_SECTION_ITEMS = 5
 
 
 def clip_item(text: str) -> str:
@@ -790,7 +925,7 @@ def assert_no_raw_dump(markdown: str, scan_list) -> None:
         sys.exit(2)
 
 
-def format_description(desc: str) -> list[str]:
+def format_description(desc: str, label: str = "說明") -> list[str]:
     """Render a Slither description as readable markdown lines.
 
     Slither descriptions are indented trees whose leaves are often rosters —
@@ -815,9 +950,9 @@ def format_description(desc: str) -> list[str]:
     if "\n" not in desc:
         desc = desc.strip()
         if len(desc) <= FLAT_DESCRIPTION_CAP:
-            return [f"**說明**：{desc}", ""]
+            return [f"**{label}**：{desc}", ""]
         return [
-            f"**說明**：{desc[:FLAT_DESCRIPTION_CAP].rstrip()}……",
+            f"**{label}**：{desc[:FLAT_DESCRIPTION_CAP].rstrip()}……",
             "",
             f"（原始描述共 {len(desc)} 字元，此處截斷；完整內容見掃描原始輸出。"
             "此筆的 classification.json 產生時描述仍被壓成單行，"
@@ -878,7 +1013,7 @@ def format_description(desc: str) -> list[str]:
 
     close_roster()
 
-    out = ["**說明**：", ""]
+    out = [f"**{label}**：", ""]
     out += [f"- {h}" for h in head]
     for header, items in sections.items():
         out.append(f"- {header}")
@@ -898,7 +1033,7 @@ def format_description(desc: str) -> list[str]:
     out.append("")
     return out
 
-def render_finding_detail(item):
+def render_finding_detail(item, label=None, id_to_label=None):
     sev = item.get("severity")
     impact = item.get("impact")
     sev_cell = sev or "—"
@@ -916,27 +1051,64 @@ def render_finding_detail(item):
     rows.append(("位置", f"`{item_location(item)}`"))
     if item.get("scenario"):
         rows.append(("命中情境", item["scenario"]))
-    out = [f"### {item.get('id')}｜{item_title(item)}", ""]
+    label = label or item.get("id")
+    id_to_label = id_to_label or {}
+    ref = lambda t: relabel_refs(t, id_to_label)
+    heading = f"[{label}] {item_title(item)}" if is_real_finding(item) else f"{item.get('id')}｜{item_title(item)}"
+    out = [f"### {heading}", ""]
+    # The scan id stays visible as provenance: the [S-#] label is derived from
+    # severity and renumbers, so it is not what a client quotes back at us when
+    # correlating against their own rescan.
+    if is_real_finding(item) and item.get("id"):
+        rows.insert(0, ("掃描編號", item["id"]))
     out += ["| | |", "|---|---|"]
     out += [f"| {k} | {v} |" for k, v in rows]
     out.append("")
     if item.get("severity_rationale"):
-        out += [f"**嚴重度調整理由**：{item['severity_rationale']}", ""]
-    out += format_description(item.get("description"))
+        out += [f"**嚴重度調整理由**：{ref(item['severity_rationale'])}", ""]
+
+    if not is_real_finding(item):
+        # Examined and dismissed: the load-bearing content is why it does not
+        # apply. An "Impact" section for a false positive states a harm that
+        # was just concluded not to exist.
+        out += format_description(item.get("description"))
+        note = (item.get("dev_note") or "").strip()
+        if note:
+            out += [f"**判斷依據**：{ref(note)}", ""]
+        return "\n".join(out)
+
+    def section(heading_text, text, missing_hint):
+        body = ref((text or "").strip())
+        if body:
+            return [f"**{heading_text}**：{body}", ""]
+        return [f"**{heading_text}**：（待補 —— {missing_hint}）", ""]
+
+    out += section(
+        "說明",
+        finding_explanation(item),
+        "哪個函式、正常應如何運作、為何出錯",
+    )
+    # Slither's own words are kept below the human explanation rather than in
+    # place of it: the tool says what it matched, the human says what it means.
+    if tool_description(item):
+        out += format_description(tool_description(item), label="掃描工具原始描述")
+    out += section("影響", item.get("impact_detail"), "具體危害與對應的業務損失")
+    out += section("攻擊情境／重現方式", item.get("proof_of_concept"), "攻擊邏輯，或可重現的測試碼")
+
     note = (item.get("dev_note") or "").strip()
     if note:
-        out += [f"**判斷依據**：{note}", ""]
+        out += [f"**判斷依據**：{ref(note)}", ""]
     if item.get("category") == "D":
         out += [
             "**待確認事項**：",
             "",
-            f"- 要確認什麼：{item.get('confirm_what') or '—'}",
+            f"- 要確認什麼：{ref(item.get('confirm_what')) or '—'}",
             f"- 由誰確認：{item.get('confirm_who') or '—'}",
-            f"- 兩種答案各自的處置：{item.get('confirm_branches') or '—'}",
+            f"- 兩種答案各自的處置：{ref(item.get('confirm_branches')) or '—'}",
             "",
         ]
-    elif item.get("remediation"):
-        out += [f"**建議**：{item['remediation']}", ""]
+    else:
+        out += section("建議修法", item.get("remediation"), "diff 或修改後的程式碼片段，與短期／長期建議")
     return "\n".join(out)
 
 
@@ -946,11 +1118,19 @@ def render_findings_section(effective, manual, classification_provided):
     items = [i for i in all_items(effective, manual) if is_detailed(i)]
     if not items:
         return "本次無需要個別說明的發現。\n"
+    labels = assign_labels(items)
     intro = (
         f"以下逐筆列出 {len(items)} 項發現。低嚴重度且已判定為可接受風險或誤報的項目"
-        "不在此節，彙整於「已評估項目摘要」。\n"
+        "不在此節，彙整於「已評估項目摘要」。\n\n"
+        "編號 `[H-1]` 為嚴重度代碼（C 危急／H 高／M 中／L 低／I 資訊）加該嚴重度內的序號，"
+        "僅指派給經判定確實成立、需要處置的發現；經查證為誤報或已接受之風險沿用掃描編號。\n"
     )
-    return intro + "\n" + "\n".join(render_finding_detail(i) for i in items)
+    id_to_label = {
+        i.get("id"): labels[id(i)] for i in items if id(i) in labels and i.get("id")
+    }
+    return intro + "\n" + "\n".join(
+        render_finding_detail(i, labels.get(id(i)), id_to_label) for i in items
+    )
 
 
 def render_evaluated_summary(effective, classification_provided):
@@ -1170,6 +1350,10 @@ def main() -> None:
         "---\n\n"
         f"{body}"
     )
+
+    ordered = all_items(effective, manual)
+    detailed = [i for i in ordered if is_detailed(i)]
+    report_missing_sections(detailed, assign_labels(detailed))
 
     assert_no_raw_dump(report, scan_list)
 

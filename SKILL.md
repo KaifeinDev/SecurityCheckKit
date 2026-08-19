@@ -83,9 +83,18 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 
 - `severity`：業界五級（Critical／High／Medium／Low／Informational），**必填**。skeleton 已預填為工具 impact 的對應值，維持原值永遠不需要理由。
 - `severity_rationale`：只有**降級**（判得比工具輕）時必填。閘門讀的是唯讀的 `impact`，所以降級不會繞過閘門，但報告會並列印出兩個等級與這段理由，讓甲方能檢視這個判斷。
-- `remediation`：`category = A` 必填，寫「怎麼修」。
+- `remediation`：`category = A` 必填，寫「怎麼修」。報告以「建議修法」呈現，內容給 diff 或改後的程式碼片段，並分短期修復與長期架構建議。
 - `confirm_what` / `confirm_who` / `confirm_branches`：`category = D` 必填三格——要確認什麼、問誰、兩種答案各自怎麼做。**D 類不得停在問句。**
 - `id`：統一編號（`<專案縮寫大寫>-<兩位數>`，如 `BGT-01`），掃描發現與人工發現共用同一序列、不得重複；原掃描序號留在 `scan_id`，不印進報告。
+
+**確認成立的發現要寫的四個欄位**（`category = A`／`D` 與全部 `manual_findings`）。報告依 Cyfrin 格式排版成 `[S-#] 標題` → 說明 → 影響 → 攻擊情境／重現方式 → 建議修法；缺的欄位會在報告中顯示「待補」並在 `cli.py report` 的 stdout 列出，不擋產出：
+
+- `title`：一句話標題，寫「根因 + 影響」而不是 detector 名稱。`reentrancy-eth` 是檢查器名稱，不是標題；「repayLoan 缺少 nonReentrant，重入期間份額價格虛高」才是。
+- `explanation`：哪個函式、正常應該怎麼運作、為什麼出錯。掃描工具的原始描述會另外獨立呈現，不要照抄。
+- `impact_detail`：具體危害，把技術問題轉成業務損失（誰的錢、多少、什麼條件下）。欄位名不叫 `impact`，因為 `impact` 已經是工具自己的嚴重度且閘門讀它。
+- `proof_of_concept`：攻擊邏輯的步驟，或可重現的測試碼／指令。
+
+**報告中的 `[S-#] 編號**：由嚴重度代碼（C 危急／H 高／M 中／L 低／I 資訊）加該嚴重度內的序號組成，**產報告時即時推導、不寫進 classification.json**——它編碼了嚴重度，而嚴重度是可以改的，存起來會在重新分級後無聲過期。只指派給經判定確實成立的發現；誤報（C）與已接受風險（B）沿用掃描編號。**交叉引用一律寫穩定的掃描編號**（如「同 BGT-02」），報告會自動替換成當下的 `[S-#]`。
 
 **另外兩個頂層鍵**：`scenario_coverage`（情境庫逐合約覆蓋紀錄，進報告的「情境庫覆蓋」章節——`hits` 內的編號必須對得上實際存在的 finding）與 `scope_exclusion_reasons`（`--exclude-path` 每個前綴的排除理由，進報告的「掃描範圍」章節）。
 
@@ -102,7 +111,12 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
       "lines": [38],
       "description": "<skeleton 預填的 slither 描述>",
       "category": "C",
-      "dev_note": "<具體理由，禁止空泛字眼如「沒問題」；B/C 類必填>"
+      "dev_note": "<具體理由，禁止空泛字眼如「沒問題」；B/C 類必填>",
+      "title": "",
+      "explanation": "",
+      "impact_detail": "",
+      "proof_of_concept": "",
+      "remediation": ""
     }
   ],
   "manual_findings": []
@@ -116,11 +130,14 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 ```json
 {
   "id": "M1",
-  "title": "<一句話標題>",
+  "title": "<一句話標題：根因 + 影響>",
   "severity": "Critical|High|Medium|Low|Informational",
   "file": "src/Vault.sol",
   "lines": [32, 35],
-  "description": "<問題說明與影響>",
+  "description": "<哪個函式、正常該怎麼運作、為什麼出錯>",
+  "impact_detail": "<具體危害與業務損失>",
+  "proof_of_concept": "<攻擊步驟或可重現的測試碼>",
+  "remediation": "<diff 或改後的程式碼；短期修復與長期建議>",
   "category": "A|B|D",
   "scenario": "<可選：命中 references/logic_scan.md 的情境編號，如 L3>",
   "dev_note": "<判斷依據，必須引用關鍵語句位置（檔案:行號）；人工發現不存在 C 誤報，確認不是問題就直接移除>"

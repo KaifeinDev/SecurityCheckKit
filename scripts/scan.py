@@ -161,6 +161,15 @@ def build_classification_skeleton(before_json, auto_style=True, id_prefix="PRJ")
             "description": f["description"],
             "category": "",
             "dev_note": "",
+            # The report lays a confirmed finding out as
+            # "[S-#] title / 說明 / 影響 / 攻擊情境 / 建議修法". Emitted empty so
+            # Step 2 sees the shape it is expected to fill rather than having to
+            # know the schema; only findings that end up A/D (or human-found)
+            # actually need them, and build_report reports what is still blank.
+            "title": "",
+            "explanation": "",
+            "impact_detail": "",
+            "proof_of_concept": "",
             "remediation": "",
         }
         if auto_style and f["check"] in STYLE_ONLY_CHECKS:
