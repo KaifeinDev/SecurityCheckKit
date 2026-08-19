@@ -408,15 +408,13 @@ def compute_grade(effective, manual, classification_provided):
     high_scan = [f for f in effective if f["impact"] == "High" and f["category"] != "C"]
     high_manual = [m for m in manual if is_high_risk_manual(m)]
     if high_scan or high_manual:
-        parts = []
-        if high_scan:
-            parts.append(f"{len(high_scan)} 項高嚴重度掃描發現尚未排除（非誤報）")
-        if high_manual:
-            parts.append(f"{len(high_manual)} 項人工複核判定之危急／高風險")
         return {
             "tier": 4,
             "label": "第四級",
-            "reason": "偵測到 " + "、".join(parts) + "，需修復並重新掃描後才可交付。",
+            "reason": (
+                f"偵測到 {len(high_scan) + len(high_manual)} 項危急／高嚴重度發現尚未排除，"
+                "需修復並重新掃描後才可交付。"
+            ),
         }
 
     confirmed = [f for f in effective if f["category"] == "A"] + [m for m in manual if m.get("category") == "A"]
@@ -470,14 +468,12 @@ def render_internal_banner(grade_info):
 
 def render_limitations():
     return (
-        "本報告由 Slither 靜態分析工具掃描產生，並經工程團隊逐筆人工分類複核。解讀本報告時，"
-        "請留意以下範圍限制：\n\n"
+        "本報告由本檢測工具產出，解讀時請留意以下範圍限制：\n\n"
         "- **偵測範圍**：靜態分析擅長偵測「程式寫法特徵層級」的問題（如重入模式、`tx.origin` 授權、"
         "弱亂數來源、未檢查的低階呼叫回傳值等）。\n"
         "- **已知偵測邊界**：業務邏輯層級的問題 —— 例如權限檢查的實作邏輯錯誤、應存在而未實作的保護、"
-        "經濟模型層面的攻擊（搶跑、滑點）—— 不在靜態分析工具的可偵測範圍內。本報告的"
-        "「人工複核發現」章節記錄工程團隊在分類複核過程中以人工方式補充發現的此類問題，"
-        "但人工複核的覆蓋程度不等同於系統性審計。\n"
+        "經濟模型層面的攻擊（搶跑、滑點）—— 靜態規則無法窮舉，本工具以情境庫逐合約比對補充涵蓋，"
+        "但其涵蓋程度不等同於系統性審計。\n"
         "- **文件性質**：本報告為交付前之**自我檢查證明**，證明工程團隊已執行掃描並對每一筆發現"
         "完成逐筆判讀；其不構成、亦不取代由獨立第三方執行之完整安全審計。\n"
     )
@@ -522,7 +518,7 @@ def render_standards_appendix():
         "- **C｜誤報**：靜態分析限制造成的誤判，實際已有防護機制或該判斷邏輯不適用。\n"
         "- **D｜待確認**：尚無法判定歸屬者一律列此類；判讀信心不足時寧列 D，不猜測分類。"
         "此類項目均附「要確認什麼／由誰確認／兩種答案各自的處置」。\n"
-        "- 人工複核發現僅得分類 A／B／D；經確認非問題者直接自清單移除，不設誤報分類。\n"
+        ""
     )
 
 
@@ -621,6 +617,15 @@ def render_scope(scope, exclusion_reasons):
     return "\n".join(out) + "\n"
 
 
+def render_scope_note(md):
+    """A deviation disclosure belongs beside the scope it qualifies, not in the
+    protocol write-up: the scope section states file hashes as proof of what was
+    audited, and this is where a caveat on those hashes has to be readable."""
+    if not md:
+        return ""
+    return re.sub(r"^(#{2,5}) ", r"#\1 ", md.strip(), flags=re.M) + "\n\n"
+
+
 def render_overview(overview_md):
     """Inlined verbatim: --overview supplies its own `##` section headings, so
     wrapping it in one more would render a page carrying nothing but a title.
@@ -628,14 +633,20 @@ def render_overview(overview_md):
     supply one."""
     if not overview_md:
         return (
-            "## 協定理解摘要\n\n"
+            "### 協定理解摘要\n\n"
             "_未提供協定理解摘要。_ 本節原應說明受檢系統的運作方式、各合約職責與特權角色的實際權限範圍；"
             "缺少此節時，讀者無從判斷後續發現的業務影響。\n"
         )
-    return overview_md.strip() + "\n"
+    # Inlined under a top-level chapter now, so every heading is demoted one
+    # level; authors keep writing `##`/`###` and the report decides the
+    # hierarchy it needs. Deepest first, or a `##` promoted to `###` would be
+    # demoted a second time by the next pass and collapse the nesting.
+    return re.sub(r"^(#{2,5}) ", r"#\1 ", overview_md.strip(), flags=re.M) + "\n"
 
 
 def render_methodology():
+    """Emits its own `###` heading: sections are now subordinate to the three
+    top-level chapters, so the chapter template no longer supplies one."""
     """Numbered steps, in the shape a third-party audit report uses. The old
     section was three bullets of which two were disclaimers — it described
     what we cannot do before saying what we did."""
@@ -1039,7 +1050,7 @@ def render_finding_detail(item, label=None, id_to_label=None):
     id_to_label = id_to_label or {}
     ref = lambda t: relabel_refs(t, id_to_label)
     heading = f"[{label}] {item_title(item)}" if is_real_finding(item) else f"{item.get('id')}｜{item_title(item)}"
-    out = [f"### {heading}", ""]
+    out = [f"#### {heading}", ""]
     # The scan id stays visible as provenance: the [S-#] label is derived from
     # severity and renumbers, so it is not what a client quotes back at us when
     # correlating against their own rescan.
@@ -1201,6 +1212,12 @@ def main() -> None:
     parser.add_argument("--env")
     parser.add_argument("--scope")
     parser.add_argument("--overview", help="Markdown file inlined as the protocol-overview section")
+    parser.add_argument(
+        "--scope-note",
+        help="Markdown inlined at the end of Audit Methodology and Scoping — "
+             "deviations from the standard procedure that qualify what the scope "
+             "section claims (e.g. source altered locally to make the scan run)",
+    )
     parser.add_argument("--client", help="Client name for the cover page")
     parser.add_argument("--engagement-from")
     parser.add_argument("--engagement-to")
@@ -1212,10 +1229,14 @@ def main() -> None:
     classification = load_json(args.classification)
     env = load_json(args.env)
     scope = load_json(args.scope)
-    overview_md = None
-    if args.overview:
-        with open(args.overview, encoding="utf-8") as f:
-            overview_md = f.read()
+    def read_md(path):
+        if not path:
+            return None
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    overview_md = read_md(args.overview)
+    scope_note_md = read_md(args.scope_note)
 
     scan_list = extract_findings(before)
 
@@ -1266,53 +1287,40 @@ def main() -> None:
         engagement = env.get("scan_date", "—")
 
     total_items = len(effective) + len(manual)
-    body = f"""## 摘要
+    body = f"""## Audit Methodology and Scoping
+
+### 掃描範圍
+
+{render_scope(scope, exclusion_reasons)}
+### 檢測方法
+
+{render_methodology()}
+### 範圍限制
+
+{render_limitations()}
+{render_scope_note(scope_note_md)}---
+
+## Executive Summary
 
 **受檢對象**：{args.client or '（未指定）'}
 **檢測期間**：{engagement}
 **受檢版本**：{(env or {}).get('git_commit') or 'N/A'}
 
-本次共提出 {total_items} 項發現（掃描工具產出 {len(effective)} 項、人工複核產出 {len(manual)} 項），依嚴重程度分布如下：
+本次共提出 {total_items} 項發現，依嚴重程度分布如下：
 
 {render_severity_counts(effective, manual)}{render_classification_disclosure(effective)}
-確認成立、需要處置的發現逐筆列於「Findings」；經評估為誤報或可接受風險的項目彙整於「已評估項目摘要」。
-
----
-
-## 掃描範圍
-
-{render_scope(scope, exclusion_reasons)}
----
+確認成立、需要處置的發現逐筆列於「Audit Result」；經評估為誤報或可接受風險的項目彙整於同章的「已評估項目摘要」。
 
 {render_overview(overview_md)}
 ---
 
-## 檢測方法
-
-{render_methodology()}
----
-
-## 掃描環境資訊
-
-{render_env_table(env)}
----
-
-## 情境庫覆蓋
-
-{render_scenario_coverage(coverage)}
----
-
-## Findings
+## Audit Result
 
 {render_findings_section(effective, manual, classification is not None)}
----
-
-## 已評估項目摘要
+### 已評估項目摘要
 
 {render_evaluated_summary(effective, classification is not None)}
----
-
-## 附錄：發現處置分類
+### 附錄：發現處置分類
 
 {render_standards_appendix()}"""
 

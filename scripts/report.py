@@ -63,6 +63,7 @@ def main() -> None:
     parser.add_argument("--env")
     parser.add_argument("--scope")
     parser.add_argument("--overview")
+    parser.add_argument("--scope-note")
     parser.add_argument("--client")
     parser.add_argument("--engagement-from")
     parser.add_argument("--engagement-to")
@@ -83,7 +84,7 @@ def main() -> None:
         build_cmd += ["--classification", args.classification]
     if args.env:
         build_cmd += ["--env", args.env]
-    for flag in ("scope", "overview", "client", "engagement_from", "engagement_to"):
+    for flag in ("scope", "overview", "scope_note", "client", "engagement_from", "engagement_to"):
         value = getattr(args, flag)
         if value:
             build_cmd += ["--" + flag.replace("_", "-"), value]
