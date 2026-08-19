@@ -74,6 +74,9 @@ VALID_SOURCES = {"tool", "manual"}
 FINDING_ID_RE = re.compile(r"^[A-Z]{2,6}-\d{2,}$")
 
 VALID_CATEGORIES = {"A", "B", "C", "D"}
+# Reading order for the Findings section: what still needs fixing, then what is
+# still undecided, then what was examined and accepted or dismissed.
+CATEGORY_ORDER = {"A": 0, "D": 1, None: 2, "B": 3, "C": 4}
 # Manual findings never carry C: a human-found issue that turns out not to be
 # a problem is deleted from the list, not filed as a tool false positive.
 MANUAL_CATEGORIES = {"A", "B", "D"}
@@ -523,42 +526,18 @@ def render_standards_appendix():
     )
 
 
-def render_pending_table(effective, manual, classification_provided):
-    """One row per item that needs a decision or an action: A (confirmed, not
-    yet fixed) and D (not yet decided), from both sources."""
-    if not classification_provided:
-        return "_未提供分類資料（Step 2 未寫入 classification.json），無法列出總表。_\n"
-    ordered = all_items(effective, manual)
-    # Labels must come from the same sequence the findings section numbers, or
-    # the table and the detail headings would disagree.
-    labels = assign_labels([i for i in ordered if is_detailed(i)])
-    rows = [i for i in ordered if i.get("category") in ("A", "D", None)]
-    if not rows:
-        return "本次無需要決策或處理的項目。\n"
-    lines = [
-        "**狀態欄位反映本次產出報告當下的處置進度**，尚未標註狀態的項目預設顯示「"
-        + DEFAULT_STATUS
-        + "」。\n",
-        "| 編號 | 掃描編號 | 標題 | 嚴重度 | 工具 impact | 處置 | 狀態 |",
-        "|---|---|---|---|---|---|---|",
-    ]
-    for i in rows:
-        label = labels.get(id(i))
-        lines.append(
-            f"| {('[' + label + ']') if label else '—'} | {i.get('id') or '—'} | {item_title(i)} | {i.get('severity') or '—'} | "
-            f"{i.get('impact') or '—'} | {CATEGORY_LABEL.get(i.get('category'), i.get('category'))} | "
-            f"{i.get('status') or DEFAULT_STATUS} |"
-        )
-    return "\n".join(lines) + "\n"
-
-
 def all_items(effective, manual):
-    """Scan findings and manual findings in one sequence, sorted by the
-    presented severity. The report no longer separates them by origin — a
-    reader wants the problems ordered by how bad they are, not by which of our
-    two mechanisms happened to notice them (`source` records that)."""
+    """Scan findings and manual findings in one sequence, ordered by what the
+    reader has to act on: disposition first (confirmed before accepted), then
+    severity within each. Origin is deliberately not part of the ordering — a
+    reader wants the problems grouped by what they must do about them, not by
+    which of our two mechanisms happened to notice them (`source` records
+    that)."""
     items = list(effective) + list(manual)
-    return sorted(items, key=lambda i: INDUSTRY_SEVERITY_RANK.get(i.get("severity"), 99))
+    return sorted(items, key=lambda i: (
+        CATEGORY_ORDER.get(i.get("category"), 99),
+        INDUSTRY_SEVERITY_RANK.get(i.get("severity"), 99),
+    ))
 
 
 def item_location(item):
@@ -643,8 +622,13 @@ def render_scope(scope, exclusion_reasons):
 
 
 def render_overview(overview_md):
+    """Inlined verbatim: --overview supplies its own `##` section headings, so
+    wrapping it in one more would render a page carrying nothing but a title.
+    The placeholder does need a heading of its own, having no content to
+    supply one."""
     if not overview_md:
         return (
+            "## 協定理解摘要\n\n"
             "_未提供協定理解摘要。_ 本節原應說明受檢系統的運作方式、各合約職責與特權角色的實際權限範圍；"
             "缺少此節時，讀者無從判斷後續發現的業務影響。\n"
         )
@@ -1120,7 +1104,8 @@ def render_findings_section(effective, manual, classification_provided):
         return "本次無需要個別說明的發現。\n"
     labels = assign_labels(items)
     intro = (
-        f"以下逐筆列出 {len(items)} 項發現。低嚴重度且已判定為可接受風險或誤報的項目"
+        f"以下逐筆列出 {len(items)} 項發現，先列已確認需修復（A）者，再列經評估為可接受風險（B）者；"
+        "各組內依嚴重度由高至低排序。低嚴重度且已判定為可接受風險或誤報的項目"
         "不在此節，彙整於「已評估項目摘要」。\n\n"
         "編號 `[H-1]` 為嚴重度代碼（C 危急／H 高／M 中／L 低／I 資訊）加該嚴重度內的序號，"
         "僅指派給經判定確實成立、需要處置的發現；經查證為誤報或已接受之風險沿用掃描編號。\n"
@@ -1290,7 +1275,7 @@ def main() -> None:
 本次共提出 {total_items} 項發現（掃描工具產出 {len(effective)} 項、人工複核產出 {len(manual)} 項），依嚴重程度分布如下：
 
 {render_severity_counts(effective, manual)}{render_classification_disclosure(effective)}
-需要決策或行動的項目彙整於「待處理項目」，逐筆說明見「發現明細」。
+確認成立、需要處置的發現逐筆列於「Findings」；經評估為誤報或可接受風險的項目彙整於「已評估項目摘要」。
 
 ---
 
@@ -1298,8 +1283,6 @@ def main() -> None:
 
 {render_scope(scope, exclusion_reasons)}
 ---
-
-## 協定理解摘要
 
 {render_overview(overview_md)}
 ---
@@ -1319,12 +1302,7 @@ def main() -> None:
 {render_scenario_coverage(coverage)}
 ---
 
-## 待處理項目
-
-{render_pending_table(effective, manual, classification is not None)}
----
-
-## 發現明細
+## Findings
 
 {render_findings_section(effective, manual, classification is not None)}
 ---
