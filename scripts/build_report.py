@@ -723,6 +723,16 @@ XFUNC_HEADER_RE = re.compile(r"can be used in cross function reentrancies:$")
 # separator, " - ", also occurs inside expressions like `dueDate_ - startDate_`),
 # so the honest fallback is to truncate and point at the raw scan output.
 FLAT_DESCRIPTION_CAP = 600
+# A single item is one fact (one call site, one write), so it is kept whole
+# well past normal prose length — but a struct literal spanning a whole
+# constructor still has to stop somewhere.
+MAX_ITEM_CHARS = 400
+# No verbatim run of tool output longer than this may reach the report. Checked
+# against the finished markdown so the invariant survives future renderers, not
+# just this one. See assert_no_raw_dump().
+MAX_VERBATIM_RUN = 500
+
+
 # A section keeps every item up to MAX_SECTION_ITEMS; past that it shows the
 # first KEEP_SECTION_ITEMS and reports how many were left out. Sized so the
 # lists that carry meaning (the state variables written after an external call
@@ -730,6 +740,54 @@ FLAT_DESCRIPTION_CAP = 600
 # file sharing a pragma) collapse.
 MAX_SECTION_ITEMS = 8
 KEEP_SECTION_ITEMS = 5
+
+
+def clip_item(text: str) -> str:
+    if len(text) <= MAX_ITEM_CHARS:
+        return text
+    return f"{text[:MAX_ITEM_CHARS].rstrip()}……（截斷，完整內容見掃描原始輸出）"
+
+
+def assert_no_raw_dump(markdown: str, scan_list) -> None:
+    """Fail the build if a scan finding's description reached the report as one
+    verbatim run.
+
+    format_description() is the only sanctioned way tool output enters the
+    report, and it always either splits the description into sections or
+    truncates it. This checks the finished markdown instead of trusting that,
+    so a future renderer that goes back to interpolating `description` directly
+    — which is exactly how an 8000-character reentrancy paragraph got shipped —
+    is caught at build time rather than in the delivered PDF.
+
+    The test is deliberately per line, not over the whole document: the defect
+    is a description collapsed onto ONE line. Normalising whitespace across the
+    document instead would erase the very indentation that distinguishes a
+    laid-out finding from a dump, and flag correctly rendered ones.
+    """
+    descriptions = []
+    for f in scan_list:
+        desc = " ".join((f.get("description") or "").split())
+        if len(desc) > MAX_VERBATIM_RUN:
+            descriptions.append((desc[:MAX_VERBATIM_RUN], f))
+    offenders = OrderedDict()
+    for line in markdown.splitlines():
+        norm = " ".join(line.split())
+        if len(norm) <= MAX_VERBATIM_RUN:
+            continue
+        for prefix, f in descriptions:
+            if prefix in norm:
+                offenders[f"{f.get('check')} @ {f.get('file')}:{format_lines(f.get('lines'))}"] = True
+    if offenders:
+        print(
+            f"報告中出現掃描工具原始描述的逐字傾印（超過 {MAX_VERBATIM_RUN} 字元），未產出報告。\n"
+            "工具輸出必須經 format_description() 分段與收合後才能寫入報告；"
+            "若是 dev_note 直接貼上工具描述，請改寫為判斷理由。\n"
+            "涉及的發現：",
+            file=sys.stderr,
+        )
+        for o in offenders:
+            print(f"  - {o}", file=sys.stderr)
+        sys.exit(2)
 
 
 def format_description(desc: str) -> list[str]:
@@ -828,7 +886,7 @@ def format_description(desc: str) -> list[str]:
         # (an event emission covering three variables is listed three times).
         items = list(OrderedDict.fromkeys(items))
         shown = items if len(items) <= MAX_SECTION_ITEMS else items[:KEEP_SECTION_ITEMS]
-        out += [f"  - {i}" for i in shown]
+        out += [f"  - {clip_item(i)}" for i in shown]
         if len(shown) < len(items):
             out.append(f"  - （其餘 {len(items) - len(shown)} 項省略，清單見掃描原始輸出）")
     if reachable:
@@ -1112,6 +1170,8 @@ def main() -> None:
         "---\n\n"
         f"{body}"
     )
+
+    assert_no_raw_dump(report, scan_list)
 
     report_path = os.path.join(args.out_dir, "report.md")
     with open(report_path, "w", encoding="utf-8") as f:
