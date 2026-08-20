@@ -729,7 +729,7 @@ CYFRIN_SECTIONS = (
     ("title", "標題"),
     ("explanation", "說明"),
     ("impact_detail", "影響"),
-    ("proof_of_concept", "攻擊情境／重現方式"),
+    ("proof_of_concept", "PoC"),
     ("remediation", "建議修法"),
 )
 
@@ -1066,21 +1066,26 @@ def render_finding_detail(item, label=None, id_to_label=None):
             return [f"**{heading_text}**：{body}", ""]
         return [f"**{heading_text}**：（待補 —— {missing_hint}）", ""]
 
-    out += section(
-        "說明",
-        finding_explanation(item),
-        "哪個函式、正常應如何運作、為何出錯",
-    )
-    # Slither's own words are kept below the human explanation rather than in
-    # place of it: the tool says what it matched, the human says what it means.
-    if tool_description(item):
-        out += format_description(tool_description(item), label="掃描工具原始描述")
+    # One 說明 per finding, whatever its source. Previously the human account
+    # and the tool's own words were separate blocks, so a finding the tool
+    # found carried two and a human-found one carried a single block — the
+    # difference read as a difference in the findings, not in their origin.
+    explanation = finding_explanation(item)
+    if explanation:
+        out += [f"**說明**：{ref(explanation)}", ""]
+    elif tool_description(item):
+        out += format_description(tool_description(item), label="說明")
+    else:
+        out += section("說明", "", "哪個函式、正常應如何運作、為何出錯")
     out += section("影響", item.get("impact_detail"), "具體危害與對應的業務損失")
-    out += section("攻擊情境／重現方式", item.get("proof_of_concept"), "攻擊邏輯，或可重現的測試碼")
+    out += section("PoC", item.get("proof_of_concept"), "攻擊邏輯，或可重現的測試碼")
 
+    # PoC now carries why a confirmed finding is real, so 判斷依據 would restate
+    # it. An accepted risk has no PoC-shaped answer to "why is this tolerable",
+    # so B keeps it — dropping it would leave the acceptance unexplained.
     note = (item.get("dev_note") or "").strip()
-    if note:
-        out += [f"**判斷依據**：{ref(note)}", ""]
+    if note and item.get("category") == "B":
+        out += [f"**接受理由**：{ref(note)}", ""]
     if item.get("category") == "D":
         out += [
             "**待確認事項**：",
