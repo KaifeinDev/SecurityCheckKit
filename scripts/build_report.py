@@ -1301,7 +1301,7 @@ def main() -> None:
         engagement = env.get("scan_date", "—")
 
     total_items = len(effective) + len(manual)
-    body = f"""## Audit Methodology and Scoping
+    body = f"""## 檢測範圍與方法
 
 ### 掃描範圍
 
@@ -1314,7 +1314,7 @@ def main() -> None:
 {render_limitations()}
 {render_scope_note(scope_note_md)}---
 
-## Executive Summary
+## 摘要
 
 **受檢對象**：{args.client or '（未指定）'}
 **檢測期間**：{engagement}
@@ -1323,12 +1323,12 @@ def main() -> None:
 本次共提出 {total_items} 項發現，依嚴重程度分布如下：
 
 {render_severity_counts(effective, manual)}{render_classification_disclosure(effective)}
-確認成立、需要處置的發現逐筆列於「Audit Result」；經評估為誤報或可接受風險的項目彙整於同章的「已評估項目摘要」。
+確認成立、需要處置的發現逐筆列於「檢測結果」；經評估為誤報或可接受風險的項目彙整於同章的「已評估項目摘要」。
 
 {render_overview(overview_md)}
 ---
 
-## Audit Result
+## 檢測結果
 
 {render_findings_section(effective, manual, classification is not None)}
 ### 已評估項目摘要
