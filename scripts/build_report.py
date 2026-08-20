@@ -1100,7 +1100,7 @@ def render_finding_detail(item, label=None, id_to_label=None):
     return "\n".join(out)
 
 
-def render_result_totals(items):
+def render_result_totals(items, all_count):
     """Counts before detail: a reader opening Audit Result should see the shape
     of the outcome before the first write-up, not have to tally 30 headings."""
     by_cat = OrderedDict()
@@ -1111,7 +1111,14 @@ def render_result_totals(items):
         sev = i.get("severity")
         if sev in by_sev:
             by_sev[sev] += 1
-    out = [f"本章逐筆列出 {len(items)} 項發現。", "", "| 嚴重度 | 筆數 |", "|---|---|"]
+    rest = all_count - len(items)
+    lead = f"本次共 {all_count} 項發現，本章逐筆列出其中 {len(items)} 項。"
+    if rest > 0:
+        lead += (
+            f"其餘 {rest} 項為低嚴重度（Low／Informational）且經判定為可接受風險或誤報者，"
+            "逐筆紀錄保留於工作底稿，可依需要調閱。"
+        )
+    out = [lead, "", "| 嚴重度 | 筆數 |", "|---|---|"]
     out += [f"| {sev} | {n} |" for sev, n in by_sev.items()]
     out += ["", "| 處置分類 | 筆數 |", "|---|---|"]
     for cat in sorted(by_cat, key=lambda c: CATEGORY_ORDER.get(c, 99)):
@@ -1131,7 +1138,7 @@ def render_findings_section(effective, manual, classification_provided):
         i.get("id"): labels[id(i)] for i in items if id(i) in labels and i.get("id")
     }
 
-    out = [render_result_totals(items)]
+    out = [render_result_totals(items, len(effective) + len(manual))]
     out.append(
         "編號 `[H-1]` 為嚴重度代碼（C 危急／H 高／M 中／L 低／I 資訊）加該嚴重度內的序號，"
         "僅指派給經判定確實成立、需要處置的發現；經查證為誤報或已接受之風險沿用掃描編號。\n"
@@ -1328,7 +1335,7 @@ def main() -> None:
 本次共提出 {total_items} 項發現，依嚴重程度分布如下：
 
 {render_severity_counts(effective, manual)}{render_classification_disclosure(effective)}
-確認成立、需要處置的發現逐筆列於「檢測結果」；經評估為誤報或可接受風險的項目彙整於同章的「已評估項目摘要」。
+全部發現逐筆列於「檢測結果」，依處置分類分組。
 
 {render_overview(overview_md)}
 ---
@@ -1336,9 +1343,6 @@ def main() -> None:
 ## 檢測結果
 
 {render_findings_section(effective, manual, classification is not None)}
-### 已評估項目摘要
-
-{render_evaluated_summary(effective, classification is not None)}
 ### 附錄：發現處置分類
 
 {render_standards_appendix()}"""
