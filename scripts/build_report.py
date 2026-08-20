@@ -76,7 +76,7 @@ FINDING_ID_RE = re.compile(r"^[A-Z]{2,6}-\d{2,}$")
 VALID_CATEGORIES = {"A", "B", "C", "D"}
 # Reading order for the Findings section: what still needs fixing, then what is
 # still undecided, then what was examined and accepted or dismissed.
-CATEGORY_ORDER = {"A": 0, "D": 1, None: 2, "B": 3, "C": 4}
+CATEGORY_ORDER = {"A": 0, "B": 1, "D": 2, None: 3, "C": 4}
 # Manual findings never carry C: a human-found issue that turns out not to be
 # a problem is deleted from the list, not filed as a tool false positive.
 MANUAL_CATEGORIES = {"A", "B", "D"}
@@ -645,30 +645,18 @@ def render_overview(overview_md):
 
 
 def render_methodology():
-    """Emits its own `###` heading: sections are now subordinate to the three
-    top-level chapters, so the chapter template no longer supplies one."""
-    """Numbered steps, in the shape a third-party audit report uses. The old
-    section was three bullets of which two were disclaimers — it described
-    what we cannot do before saying what we did."""
+    """Numbered steps, in the shape a third-party audit report uses. Scope
+    limitations live in their own section — stating them here as well made the
+    method read as a disclaimer twice over."""
     return (
         "本次檢測依以下步驟執行：\n\n"
-        "1. **建置與環境確認**：確認專案可完整編譯，記錄工具鏈與相依套件版本（見「掃描環境資訊」）。\n"
-        "2. **靜態分析掃描**：以 Slither 對「掃描範圍」所列全部原始檔執行完整 detector 掃描。\n"
-        "3. **逐筆人工分類複核**：對掃描產出的每一筆發現判定其處置分類（A／B／C／D）並記錄判斷依據；"
-        "工具回報的嚴重度與本報告呈現的嚴重度若有落差，逐筆附上調整理由。\n"
-        "4. **情境式邏輯漏洞比對**：對範圍內每一份合約，逐條比對內部維護的邏輯漏洞情境庫"
-        "（權限檢查實作、未保護的狀態變更、旗標未落實、價格源可操縱、記帳與實際結果脫鉤、"
-        "簽章雜湊綁定範圍、可組合模組的交互失效等），補靜態分析無法涵蓋的業務邏輯層級問題。"
-        "逐合約的比對結果見「情境庫覆蓋」。\n"
-        "5. **領域事故模式比對**：依受檢系統所屬業務領域，比對該領域公開已知的事故模式，"
-        "檢查應具備而未實作的機制。\n"
-        "6. **產出與覆核**：彙整為本報告，並對共用同一判斷理由的發現群組進行抽查。\n\n"
-        "**範圍限制**\n\n"
-        "- 靜態分析擅長偵測「程式寫法特徵層級」的問題（重入模式、`tx.origin` 授權、弱亂數來源、"
-        "未檢查的低階呼叫回傳值等）；業務邏輯層級的問題不在其可偵測範圍內，由上述第 4、5 步以人工方式補足，"
-        "但人工複核的覆蓋程度不等同於系統性審計。\n"
-        "- 本報告為交付前之**自我檢查證明**，證明工程團隊已執行掃描並對每一筆發現完成逐筆判讀；"
-        "其不構成、亦不取代由獨立第三方執行之完整安全審計。\n"
+        "1. **靜態分析掃描**：以 Slither 對「掃描範圍」所列全部原始檔執行完整 detector 掃描。\n"
+        "2. **逐筆判讀與補充比對**：對掃描產出的每一筆發現判定其處置分類並記錄判斷依據，"
+        "工具回報的嚴重度與本報告呈現的嚴重度若有落差則逐筆附上調整理由；同時對範圍內每一份合約，"
+        "逐條比對內部維護的邏輯漏洞情境庫（權限檢查實作、未保護的狀態變更、旗標未落實、價格源可操縱、"
+        "記帳與實際結果脫鉤、簽章雜湊綁定範圍、可組合模組的交互失效等），並依受檢系統所屬業務領域"
+        "比對該領域公開已知的事故模式，補靜態規則無法涵蓋的業務邏輯層級問題。\n"
+        "3. **產出與覆核**：彙整為本報告，並對共用同一判斷理由的發現群組進行抽查。\n"
     )
 
 
@@ -1107,6 +1095,26 @@ def render_finding_detail(item, label=None, id_to_label=None):
     return "\n".join(out)
 
 
+def render_result_totals(items):
+    """Counts before detail: a reader opening Audit Result should see the shape
+    of the outcome before the first write-up, not have to tally 30 headings."""
+    by_cat = OrderedDict()
+    by_sev = OrderedDict((sev, 0) for sev in INDUSTRY_SEVERITIES)
+    for i in items:
+        cat = i.get("category")
+        by_cat[cat] = by_cat.get(cat, 0) + 1
+        sev = i.get("severity")
+        if sev in by_sev:
+            by_sev[sev] += 1
+    out = [f"本章逐筆列出 {len(items)} 項發現。", "", "| 嚴重度 | 筆數 |", "|---|---|"]
+    out += [f"| {sev} | {n} |" for sev, n in by_sev.items()]
+    out += ["", "| 處置分類 | 筆數 |", "|---|---|"]
+    for cat in sorted(by_cat, key=lambda c: CATEGORY_ORDER.get(c, 99)):
+        out.append(f"| {CATEGORY_LABEL.get(cat, cat or '未分類')} | {by_cat[cat]} |")
+    out.append("")
+    return "\n".join(out)
+
+
 def render_findings_section(effective, manual, classification_provided):
     if not classification_provided:
         return "_未提供分類資料（Step 2 未寫入 classification.json），無法列出發現明細。_\n"
@@ -1114,19 +1122,25 @@ def render_findings_section(effective, manual, classification_provided):
     if not items:
         return "本次無需要個別說明的發現。\n"
     labels = assign_labels(items)
-    intro = (
-        f"以下逐筆列出 {len(items)} 項發現，先列已確認需修復（A）者，再列經評估為可接受風險（B）者；"
-        "各組內依嚴重度由高至低排序。低嚴重度且已判定為可接受風險或誤報的項目"
-        "不在此節，彙整於「已評估項目摘要」。\n\n"
-        "編號 `[H-1]` 為嚴重度代碼（C 危急／H 高／M 中／L 低／I 資訊）加該嚴重度內的序號，"
-        "僅指派給經判定確實成立、需要處置的發現；經查證為誤報或已接受之風險沿用掃描編號。\n"
-    )
     id_to_label = {
         i.get("id"): labels[id(i)] for i in items if id(i) in labels and i.get("id")
     }
-    return intro + "\n" + "\n".join(
-        render_finding_detail(i, labels.get(id(i)), id_to_label) for i in items
+
+    out = [render_result_totals(items)]
+    out.append(
+        "編號 `[H-1]` 為嚴重度代碼（C 危急／H 高／M 中／L 低／I 資訊）加該嚴重度內的序號，"
+        "僅指派給經判定確實成立、需要處置的發現；經查證為誤報或已接受之風險沿用掃描編號。\n"
     )
+    # all_items() already orders by category then severity, so grouping is a
+    # matter of emitting a heading when the category changes.
+    current = object()
+    for item in items:
+        cat = item.get("category")
+        if cat != current:
+            current = cat
+            out.append(f"### {CATEGORY_LABEL.get(cat, cat or '未分類')}\n")
+        out.append(render_finding_detail(item, labels.get(id(item)), id_to_label))
+    return "\n".join(out)
 
 
 def render_evaluated_summary(effective, classification_provided):
