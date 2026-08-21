@@ -58,20 +58,48 @@ def find_report_python() -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--before", required=True)
-    parser.add_argument("--classification")
-    parser.add_argument("--env")
-    parser.add_argument("--scope")
-    parser.add_argument("--overview")
-    parser.add_argument("--scope-note")
-    parser.add_argument("--client")
-    parser.add_argument("--engagement-from")
-    parser.add_argument("--engagement-to")
-    parser.add_argument("--worksheet", help="Internal worksheet path; defaults to <project>/audit/worksheet.md")
-    parser.add_argument("--out-dir", required=True)
-    parser.add_argument("--font", help="Passed through to md_to_pdf.py")
-    parser.add_argument("--font-bold", help="Passed through to md_to_pdf.py")
-    parser.add_argument("--skip-pdf", action="store_true", help="Only produce report.md, skip PDF conversion")
+    parser.add_argument(
+        "--before", required=True,
+        help="Step 1 的 results_before.json：本次掃描過濾後的發現，報告的事實來源",
+    )
+    parser.add_argument(
+        "--classification",
+        help="Step 2 的 classification.json：逐筆的處置分類與判斷依據。"
+             "省略時不列發現明細、不評等級（exit 3）",
+    )
+    parser.add_argument(
+        "--env",
+        help="Step 1 的 scan_env.json：工具鏈與相依套件版本，用於報告的受檢版本欄位",
+    )
+    parser.add_argument(
+        "--scope",
+        help="Step 1 的 scope.json：受檢檔案清單、行數與 SHA-256。"
+             "這是報告的效力邊界，省略時該節註明未提供",
+    )
+    parser.add_argument(
+        "--overview",
+        help="markdown，內嵌為「摘要」章的協定理解：協定怎麼運作、資產保管、角色與權限",
+    )
+    parser.add_argument(
+        "--scope-note",
+        help="markdown，接在「檢測範圍與方法」章末尾：本次偏離標準程序之處"
+             "（例如為了讓工具跑起來暫時改過原始碼，使部分檔案雜湊與交付版本不符）",
+    )
+    parser.add_argument("--client", help="甲方名稱，出現在封面與報告標題")
+    parser.add_argument("--engagement-from", help="檢測期間起日（YYYY-MM-DD）")
+    parser.add_argument("--engagement-to", help="檢測期間迄日（YYYY-MM-DD）")
+    parser.add_argument(
+        "--worksheet",
+        help="內部工作底稿的輸出路徑。含內部語氣與全量逐筆明細，不可交付甲方；"
+             "預設寫到 <專案>/audit/worksheet.md 而非 --out-dir",
+    )
+    parser.add_argument(
+        "--out-dir", required=True,
+        help="report.md 與 report.pdf 的輸出目錄（交付物）",
+    )
+    parser.add_argument("--font", help="指定 CJK 字型檔；省略時自動偵測（見 md_to_pdf.py）")
+    parser.add_argument("--font-bold", help="指定粗體字型檔；省略時找同目錄的 Bold 檔")
+    parser.add_argument("--skip-pdf", action="store_true", help="只產 report.md，跳過 PDF")
     args = parser.parse_args()
 
     py = find_report_python()
