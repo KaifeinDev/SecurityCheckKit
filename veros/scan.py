@@ -262,10 +262,21 @@ def carry_over_classifications(skeleton, prev):
 
 
 def run_slither(project_dir, raw_json_path):
-    proc = subprocess.run(
-        ["slither", ".", "--json", raw_json_path],
-        cwd=project_dir, capture_output=True, text=True, timeout=600,
-    )
+    try:
+        proc = subprocess.run(
+            ["slither", ".", "--json", raw_json_path],
+            cwd=project_dir, capture_output=True, text=True, timeout=600,
+        )
+    except FileNotFoundError:
+        # The first thing a new install hits if the toolchain is not set up.
+        # A traceback about Popen tells them nothing about what to do next.
+        raise SystemExit(
+            "找不到 slither —— Veros 呼叫它來做實際掃描，但它是獨立的工具，"
+            "不會隨 pip install veros 一起裝。\n\n"
+            "  pip install slither-analyzer\n"
+            "  solc-select install <版本> && solc-select use <版本>\n\n"
+            "裝好後跑 `veros doctor` 確認環境就緒（它會一次檢查編譯、solc、slither、forge）。"
+        )
     # Slither exits non-zero whenever it has findings, that's not a failure.
     if not os.path.isfile(raw_json_path):
         raise SystemExit(

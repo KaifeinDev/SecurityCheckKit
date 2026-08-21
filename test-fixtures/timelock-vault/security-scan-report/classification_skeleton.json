@@ -1,70 +1,119 @@
 {
   "findings": [
     {
-      "id": 1,
+      "id": "TLV-01",
+      "scan_id": 1,
+      "source": "tool",
       "check": "reentrancy-events",
       "impact": "Low",
+      "severity": "Low",
+      "severity_rationale": "",
       "file": "src/TimelockVault.sol",
       "lines": [
         46,
         57
       ],
-      "description": "Reentrancy in TimelockVault.withdraw() (src/TimelockVault.sol#46-57): External calls: - (ok,None) = msg.sender.call{value: payout}() (src/TimelockVault.sol#54) Event emitted after the call(s): - Withdrawn(msg.sender,payout,fee) (src/TimelockVault.sol#56)",
+      "description": "Reentrancy in TimelockVault.withdraw() (src/TimelockVault.sol#46-57):\n\tExternal calls:\n\t- (ok,None) = msg.sender.call{value: payout}() (src/TimelockVault.sol#54)\n\tEvent emitted after the call(s):\n\t- Withdrawn(msg.sender,payout,fee) (src/TimelockVault.sol#56)",
       "category": "",
-      "dev_note": ""
+      "dev_note": "",
+      "title": "",
+      "explanation": "",
+      "impact_detail": "",
+      "proof_of_concept": "",
+      "remediation": ""
     },
     {
-      "id": 2,
+      "id": "TLV-02",
+      "scan_id": 2,
+      "source": "tool",
       "check": "reentrancy-events",
       "impact": "Low",
+      "severity": "Low",
+      "severity_rationale": "",
       "file": "src/TimelockVault.sol",
       "lines": [
         66,
         74
       ],
-      "description": "Reentrancy in TimelockVault.sweepFees(address) (src/TimelockVault.sol#66-74): External calls: - (ok,None) = to.call{value: amount}() (src/TimelockVault.sol#71) Event emitted after the call(s): - FeesSwept(to,amount) (src/TimelockVault.sol#73)",
+      "description": "Reentrancy in TimelockVault.sweepFees(address) (src/TimelockVault.sol#66-74):\n\tExternal calls:\n\t- (ok,None) = to.call{value: amount}() (src/TimelockVault.sol#71)\n\tEvent emitted after the call(s):\n\t- FeesSwept(to,amount) (src/TimelockVault.sol#73)",
       "category": "",
-      "dev_note": ""
+      "dev_note": "",
+      "title": "",
+      "explanation": "",
+      "impact_detail": "",
+      "proof_of_concept": "",
+      "remediation": ""
     },
     {
-      "id": 3,
+      "id": "TLV-03",
+      "scan_id": 3,
+      "source": "tool",
       "check": "timestamp",
       "impact": "Low",
+      "severity": "Low",
+      "severity_rationale": "",
       "file": "src/TimelockVault.sol",
       "lines": [
         46,
         57
       ],
-      "description": "TimelockVault.withdraw() (src/TimelockVault.sol#46-57) uses timestamp for comparisons Dangerous comparisons: - require(bool,string)(block.timestamp >= unlockAt[msg.sender],still locked) (src/TimelockVault.sol#49)",
+      "description": "TimelockVault.withdraw() (src/TimelockVault.sol#46-57) uses timestamp for comparisons\n\tDangerous comparisons:\n\t- require(bool,string)(block.timestamp >= unlockAt[msg.sender],still locked) (src/TimelockVault.sol#49)",
       "category": "",
-      "dev_note": ""
+      "dev_note": "",
+      "title": "",
+      "explanation": "",
+      "impact_detail": "",
+      "proof_of_concept": "",
+      "remediation": ""
     },
     {
-      "id": 4,
+      "id": "TLV-04",
+      "scan_id": 4,
+      "source": "tool",
       "check": "low-level-calls",
       "impact": "Informational",
+      "severity": "Informational",
+      "severity_rationale": "",
       "file": "src/TimelockVault.sol",
       "lines": [
         46,
         57
       ],
-      "description": "Low level call in TimelockVault.withdraw() (src/TimelockVault.sol#46-57): - (ok,None) = msg.sender.call{value: payout}() (src/TimelockVault.sol#54)",
+      "description": "Low level call in TimelockVault.withdraw() (src/TimelockVault.sol#46-57):\n\t- (ok,None) = msg.sender.call{value: payout}() (src/TimelockVault.sol#54)",
       "category": "",
-      "dev_note": ""
+      "dev_note": "",
+      "title": "",
+      "explanation": "",
+      "impact_detail": "",
+      "proof_of_concept": "",
+      "remediation": ""
     },
     {
-      "id": 5,
+      "id": "TLV-05",
+      "scan_id": 5,
+      "source": "tool",
       "check": "low-level-calls",
       "impact": "Informational",
+      "severity": "Informational",
+      "severity_rationale": "",
       "file": "src/TimelockVault.sol",
       "lines": [
         66,
         74
       ],
-      "description": "Low level call in TimelockVault.sweepFees(address) (src/TimelockVault.sol#66-74): - (ok,None) = to.call{value: amount}() (src/TimelockVault.sol#71)",
+      "description": "Low level call in TimelockVault.sweepFees(address) (src/TimelockVault.sol#66-74):\n\t- (ok,None) = to.call{value: amount}() (src/TimelockVault.sol#71)",
       "category": "",
-      "dev_note": ""
+      "dev_note": "",
+      "title": "",
+      "explanation": "",
+      "impact_detail": "",
+      "proof_of_concept": "",
+      "remediation": ""
     }
   ],
-  "manual_findings": []
+  "manual_findings": [],
+  "scenario_coverage": {
+    "contracts": []
+  },
+  "scope_exclusion_reasons": {}
 }
