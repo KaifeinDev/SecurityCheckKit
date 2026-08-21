@@ -1,4 +1,4 @@
-# SecurityCheckKit
+# Veros
 
 在交付前，使用此工具做靜態分析並生成簡易自檢報告，確保交付的品質穩定性。
 
@@ -20,28 +20,37 @@ submodule 部署方式（見下方「安裝與部署」）不改變這個等級�
 ## 架構
 
 ```
-SecurityCheckKit/
-├── README.md              
-├── SKILL.md                ← Claude Code skill：把 CLI + AI 分類/加註解串成完整流程
-├── references/
-│   ├── pitfalls.md         ← 一些開發時遇過的問題（foundry.toml 陷阱、OZ 版本判斷、
-│   │                          slither-disable-next-line 失效、PDF 中文字型）
-│   ├── severity_grading.md ← 交付閘門行為與 impact/severity/status 三欄位模型
-│   └── logic_scan.md       ← GPT-Scan 式邏輯漏洞情境庫（L1～L10），補 Slither 抓不到的
-│                              業務邏輯層級漏洞，Step 2 必跑
+veros/                      ← 這個 repo
+├── README.md
+├── pyproject.toml          ← pip 套件定義，指令入口 veros = veros.cli:main
+├── SKILL.md → veros/SKILL.md          （symlink，Claude Code skill 佈局要求放根目錄）
+├── references → veros/references      （symlink，同上）
+├── veros/                  ← 套件本體，pip install 後這些跟著走
+│   ├── cli.py              ← 統一入口，把子指令分派出去
+│   ├── run.py              ← veros run：整條流程串起來（--brief / --apply 兩種 Step 2）
+│   ├── init_audit.py       ← veros init：產 audit/ 的手寫文件範本
+│   ├── config.py           ← veros config：AI 判讀用的模型與 API key
+│   ├── docs.py             ← veros docs：印出隨套件安裝的方法論
+│   ├── env_check.py        ← Step 0：環境健檢（veros doctor）
+│   ├── scan.py             ← Step 1：跑 slither + 過濾 + scope.json + 分類 skeleton
+│   ├── filter_results.py   ← 依 src 路徑過濾 slither JSON
+│   ├── triage.py           ← Step 2：AI 判讀。打 API，或 --emit-brief 產工單交給既有 agent
+│   ├── review.py           ← Step 2：classification.json 的機械品質檢查
+│   ├── confirm.py          ← Step 2：人工簽核 AI 草稿，清掉 ai_drafted 標記
+│   ├── report.py           ← Step 3：串 build_report + md_to_pdf
+│   ├── build_report.py     ← 驗證分類 + 判閘門 + 產 report.md 與工作底稿
+│   ├── md_to_pdf.py        ← report.md → report.pdf（CJK 斷行、避頭尾、字型偵測）
+│   ├── SKILL.md            ← 完整流程指引，也是驅動 LLM 的依據
+│   └── references/
+│       ├── pitfalls.md         ← 實測踩過的坑
+│       ├── severity_grading.md ← 嚴重度評定與閘門行為
+│       ├── logic_scan.md       ← 情境庫，補 Slither 抓不到的業務邏輯漏洞
+│       └── domain_incidents/   ← 各業務領域的公開事故模式
 ├── scripts/
-│   ├── cli.py              ← 統一入口：check / scan / report 三個子指令
-│   ├── env_check.py        ← Step 0：環境健檢（veros doctor 的實作）
-│   ├── review.py           ← Step 2：classification.json 的機械品質檢查（veros review）
-│   ├── scan.py             ← Step 1：跑 slither + 過濾 + 蒐集環境資訊 + 產 scope.json + 分類 skeleton
-│   │                          （veros scan 的實作；--prev-classification 沿用上次分類）
-│   ├── filter_results.py   ← 依 src 路徑過濾 slither JSON（被 scan.py 呼叫，也可獨立用）
-│   ├── report.py           ← Step 3：串 build_report.py + md_to_pdf.py（veros report 的實作）
-│   ├── build_report.py     ← 驗證 classification + 判閘門 + 產生 report.md 與 audit/worksheet.md
-│   └── md_to_pdf.py        ← 把 report.md 轉成 report.pdf（含 CJK 字型處理）
+│   └── regen_fixtures.sh   ← 迴歸測試：重跑兩個 fixture，比對閘門判定
 └── test-fixtures/
     ├── vulnerable-vault/   ← 第四級 ground truth：9+1 個已知漏洞（含 Slither 漏報對照）
-    └── timelock-vault/     ← 第二級 ground truth：可交付案例，含抑制註解與 before/after
+    └── timelock-vault/     ← 第二級 ground truth：可交付案例
 ```
 
 流程對照表：
@@ -50,8 +59,10 @@ SecurityCheckKit/
 |---|---|---|---|
 | 0 | 環境健檢 | 自動 | `veros doctor` |
 | 1 | 跑 Slither + 過濾 + 產範圍清單 | 自動 | `veros scan`（重掃帶 `--prev-classification` 沿用上次分類） |
-| 2 | 分類 A/B/C/D + 情境式邏輯掃描 + 記錄人工發現 | **人工確認（需 LLM 輔助）** | 判斷本身無 CLI；填完用 `veros review` 做機械檢查 |
+| 2 | 分類 A/B/C/D + 情境式邏輯掃描 + 記錄人工發現 | **AI 起草、人工確認** | `veros triage`（打 API）或 `veros triage --emit-brief`（交給既有 agent）；`veros review` 機械檢查；`veros confirm` 人工簽核 |
 | 3 | 產出交付報告 + 工作底稿 | 自動 | `veros report` |
+
+整條一次跑完：`veros run`（打 API）或 `veros run --brief` → agent 完成工單 → `veros run --apply`。
 
 抑制註解（原 Step 3）已不在編號流程內，改為**選配的收尾動作**：它是開發團隊的 CI 衛生實務，不是審計實務（專業審計公司不改客戶程式碼），外部標的一律跳過。詳見 `SKILL.md` 最後一節。
 
@@ -59,9 +70,9 @@ SecurityCheckKit/
 
 | | 交付報告 | 工作底稿 |
 |---|---|---|
-| 路徑 | `<專案>/security-scan-report/report.pdf`（+ `report.md`） | `<專案>/audit/worksheet.md` |
+| 路徑 | `<專案>/audit/report/report.pdf`（+ `report.md`） | `<專案>/audit/worksheet.md` |
 | 讀者 | 甲方 | 我方複核者、下次重掃的人 |
-| 內容 | 封面／目錄／摘要／掃描範圍／協定理解摘要／檢測方法／情境庫覆蓋／待處理項目／發現明細／已評估項目摘要／附錄 | 全量逐筆分類、複核提醒、完整覆蓋矩陣 |
+| 內容 | 封面／目錄／檢測範圍與方法／摘要（含協定理解）／檢測結果（依處置分類分組）／附錄 | 全量逐筆分類、複核提醒、完整覆蓋矩陣 |
 | git | 隨交付物 | **必須 gitignore**（含內部語氣），未忽略時 CLI 會警告 |
 
 `test-fixtures/` 底下是**已知答案的迴歸測試樣本**（測試夾具）：合約與漏洞都是刻意設計、事先寫死答案的，用來測「這套 kit 本身」準不準——不是要交付的產品合約，規則與流程文件也不依賴它們。每個樣本附一份解答卷（如 `vulnerable-vault/VULNERABILITY_CATALOG.md`，記錄植入了哪些漏洞、Slither 抓到/漏掉哪些）；改動判級邏輯或情境庫後，重跑這兩個樣本驗證等級與漏報對照沒被改壞。
@@ -79,7 +90,7 @@ SecurityCheckKit/
    ```bash
    cd <新專案根目錄>
    mkdir -p .claude/skills
-   git submodule add <SecurityCheckKit 的 repo URL> .claude/skills/security-scan
+   git submodule add https://github.com/KaifeinDev/veros.git .claude/skills/security-scan
    ```
 
    `git submodule add` 一定會把整個 repo（含 `test-fixtures/`）拉下來，沒有「只抓部分路徑」的選項。如果想讓工作目錄乾淨、不帶 `test-fixtures/`，接著設 sparse-checkout（cone mode 下根目錄檔案預設保留，只有你指定的子目錄會被 checkout）：
@@ -156,7 +167,7 @@ veros run --apply --client "<甲方名稱>"  # 套用 → review → report
 
 ```bash
 # 安裝（一次）
-pip install git+<SecurityCheckKit 的 repo URL>
+pip install git+https://github.com/KaifeinDev/veros.git
 
 # Step -1：產出 audit/overview.md 與 audit/scope_note.md 範本（只需一次）
 veros init

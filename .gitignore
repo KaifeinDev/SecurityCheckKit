@@ -9,3 +9,8 @@ test-fixtures/**/out/
 # Isolated worktrees for in-flight work
 .worktrees/
 .superpowers/
+
+# setuptools build artifacts from a local `pip install .`
+build/
+*.egg-info/
+dist/

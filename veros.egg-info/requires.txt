@@ -1,2 +1,3 @@
 fpdf2>=2.8.8
 matplotlib
+anthropic>=0.40

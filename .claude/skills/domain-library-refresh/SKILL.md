@@ -1,12 +1,12 @@
 ---
 name: domain-library-refresh
-description: Use this skill when refreshing SecurityCheckKit's shared domain incident library (references/domain_incidents/) with newly published public incident research — e.g. "刷新領域事故庫", "更新 domain_incidents", "檢查哪些領域檔過期了", "refresh the domain incident library". Handles both the staleness sweep (last_reviewed older than 3 months) and a forced refresh of a specific domain.
+description: Use this skill when refreshing Veros's shared domain incident library (references/domain_incidents/) with newly published public incident research — e.g. "刷新領域事故庫", "更新 domain_incidents", "檢查哪些領域檔過期了", "refresh the domain incident library". Handles both the staleness sweep (last_reviewed older than 3 months) and a forced refresh of a specific domain.
 argument-hint: "[領域名稱，如 rwa；省略則掃描所有過期領域]"
 ---
 
 # 領域事故庫刷新（來源 A：公開資料）
 
-這個 skill 是 SecurityCheckKit **維護者**專用，不是接案工程師在跑審計時用的。它負責
+這個 skill 是 Veros **維護者**專用，不是接案工程師在跑審計時用的。它負責
 `references/domain_incidents/` 的公開資料新鮮度——把這份責任從專案的關鍵路徑上移開，
 讓專案端執行 `references/logic_scan.md` 規則 1 時可以直接套用庫的內容而不必重跑搜尋。
 
@@ -33,7 +33,7 @@ PR 流程，不由本 skill 執行。
 **未帶參數** → 依新鮮度掃描，門檻 **3 個月**：
 
 ```bash
-cd <SecurityCheckKit repo 根目錄>
+cd <veros repo 根目錄>
 TODAY=$(date +%Y-%m-%d)
 CUTOFF=$(date -v-3m +%Y-%m-%d 2>/dev/null || date -d '3 months ago' +%Y-%m-%d)
 echo "今天 $TODAY／門檻 $CUTOFF：last_reviewed 早於門檻者需要刷新"
@@ -77,7 +77,7 @@ grep -H "^last_reviewed:" references/domain_incidents/*.md | sort -t: -k3
 ## Step 4：驗證
 
 ```bash
-cd <SecurityCheckKit repo 根目錄>
+cd <veros repo 根目錄>
 DOMAIN=<剛才刷新的領域，如 rwa>
 echo "--- 條目數 vs 索引列數（兩者必須相等）:"
 grep -c "^## D-" references/domain_incidents/$DOMAIN.md
@@ -104,7 +104,7 @@ grep 沒輸出不代表安全，只代表沒踩到最明顯的那種修改。
 ## Step 5：開 PR
 
 ```bash
-cd <SecurityCheckKit repo 根目錄>
+cd <veros repo 根目錄>
 git checkout -b domain-refresh/<領域>-$(date +%Y%m)
 git add references/domain_incidents/<領域>.md
 git commit -m "Refresh <領域> domain incidents (public research, <YYYY-MM>)"

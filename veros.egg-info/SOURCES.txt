@@ -4,6 +4,8 @@ veros/SKILL.md
 veros/__init__.py
 veros/build_report.py
 veros/cli.py
+veros/config.py
+veros/confirm.py
 veros/docs.py
 veros/env_check.py
 veros/filter_results.py
@@ -11,7 +13,9 @@ veros/init_audit.py
 veros/md_to_pdf.py
 veros/report.py
 veros/review.py
+veros/run.py
 veros/scan.py
+veros/triage.py
 veros.egg-info/PKG-INFO
 veros.egg-info/SOURCES.txt
 veros.egg-info/dependency_links.txt
