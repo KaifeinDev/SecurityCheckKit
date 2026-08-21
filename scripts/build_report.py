@@ -1034,15 +1034,22 @@ def render_finding_detail(item, label=None, id_to_label=None):
     ref = lambda t: relabel_refs(t, id_to_label)
     heading = f"[{label}] {item_title(item)}" if is_real_finding(item) else f"{item.get('id')}｜{item_title(item)}"
     out = [f"#### {heading}", ""]
-    out += ["| | |", "|---|---|"]
-    out += [f"| {k} | {v} |" for k, v in rows]
+    # Plain labelled lines rather than a table: two rows of metadata never
+    # needed a grid, and a per-finding table was the thing that kept splitting
+    # across page boundaries.
+    out += [f"**{k}**：{v}" for k, v in rows]
     out.append("")
+    # Named for what it explains — why this finding carries the severity it
+    # carries — rather than for the fact that it differs from the tool's. The
+    # tool's own rating is still stated, in one parenthetical: a client who
+    # rescans will see it, and an unexplained discrepancy reads worse than a
+    # declared one.
     impact = item.get("impact")
     if item.get("severity_rationale"):
-        downgrade = ""
+        note = ""
         if impact and IMPACT_AS_INDUSTRY.get(impact) != item.get("severity"):
-            downgrade = f"（工具判 {impact}，本報告判 {item.get('severity')}）"
-        out += [f"**嚴重度調整理由**{downgrade}：{ref(item['severity_rationale'])}", ""]
+            note = f"（掃描工具判定為 {impact}）"
+        out += [f"**嚴重度理由**{note}：{ref(item['severity_rationale'])}", ""]
 
     if not is_real_finding(item):
         # Examined and dismissed: the load-bearing content is why it does not

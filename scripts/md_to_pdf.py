@@ -84,6 +84,15 @@ KEEP_TOGETHER_ROWS = 6
 # span could exceed the text column, leaving fpdf2 no legal break point.
 MAX_NOBREAK_SPAN = 40
 
+# Widest bound run, in half-width units (a CJK character counts 2). The text
+# column fits roughly 95; staying under that guarantees a bound run always has
+# somewhere legal to break, which is the condition fpdf2 raises on.
+MAX_BOUND_UNITS = 110
+# A bound run may exceed one line as long as it is CJK — fpdf2 breaks between
+# two CJK characters. It cannot break inside an identifier, so a run carrying a
+# Latin token this long is left with its spaces intact.
+MAX_LATIN_RUN = 14
+
 FONT_CACHE_DIR = os.path.expanduser("~/.cache/security-check-kit/fonts")
 
 
@@ -188,6 +197,45 @@ def strip_inline_markup(text: str) -> str:
 _ZWSP = "​"
 
 
+_CJK = "\u3000-\u303f\u3040-\u30ff\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef"
+_IS_CJK = re.compile(f"[{_CJK}]")
+
+
+_LONG_LATIN = re.compile(r"[A-Za-z0-9_.:/()\[\]{}<>=!+*-]{%d,}" % (MAX_LATIN_RUN + 1))
+
+
+def _display_units(text: str) -> int:
+    return sum(2 if _IS_CJK.match(ch) else 1 for ch in text.replace("**", ""))
+
+
+def bind_cjk_gaps(text: str) -> str:
+    """Make spaces that touch CJK non-breaking, where that is safe.
+
+    fpdf2 fills a line and then backtracks to the last space, preferring it
+    however far back it sits. In Chinese sprinkled with Latin identifiers that
+    ends a line at the last space and leaves the rest of it blank — `影響：同`
+    on one line and the whole sentence on the next. Chinese needs no break at
+    those spaces, so removing them as candidates lets the break fall inside the
+    CJK run and the line fill.
+
+    Bound runs are capped at MAX_BOUND_UNITS. A run with no break point that
+    is wider than the column makes fpdf2 raise "Not enough horizontal space to
+    render a single character" rather than overflow, and it cannot break inside
+    an identifier the way it can between two CJK characters."""
+    parts = text.split(" ")
+    out = [parts[0]] if parts else [""]
+    for nxt in parts[1:]:
+        prev = out[-1]
+        touches_cjk = bool(prev and nxt and (_IS_CJK.search(prev[-1]) or _IS_CJK.search(nxt[0])))
+        fits = _display_units(prev) + 1 + _display_units(nxt) <= MAX_BOUND_UNITS
+        risky = _LONG_LATIN.search(prev) or _LONG_LATIN.search(nxt)
+        if touches_cjk and fits and not risky:
+            out[-1] = prev + "\u00a0" + nxt
+        else:
+            out.append(nxt)
+    return " ".join(out)
+
+
 def neutralize_markdown_delimiters(text: str) -> str:
     return text.replace("__", f"_{_ZWSP}_")
 
@@ -211,7 +259,7 @@ def strip_code_markup(text: str) -> str:
             return span
         return span.replace(" ", "\u00a0")
 
-    return neutralize_markdown_delimiters(re.sub(r"`(.*?)`", keep_together, text))
+    return bind_cjk_gaps(neutralize_markdown_delimiters(re.sub(r"`(.*?)`", keep_together, text)))
 
 
 SEVERITY_RE = re.compile(r"嚴重度[：:]\s*([A-Za-z]+)")
