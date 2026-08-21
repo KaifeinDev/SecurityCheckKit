@@ -22,8 +22,15 @@ dependencies = [
 veros = "veros.cli:main"
 
 [tool.setuptools]
-# Just the code. references/ and SKILL.md are read by a human (or an LLM doing
-# Step 2), never opened by these modules at runtime — they are cited in
-# comments and console messages only, so they stay in the repo rather than
-# riding along in site-packages where nobody would look for them.
 packages = ["veros"]
+
+[tool.setuptools.package-data]
+# The methodology ships with the code. references/logic_scan.md is the scenario
+# library Step 2 works through, severity_grading.md the grading standard,
+# pitfalls.md the accumulated field notes, domain_incidents/ the per-domain
+# incident research — and SKILL.md is what drives an LLM through the whole
+# thing. A pip install without them leaves the deterministic half of the
+# pipeline and none of the judgement, which is the half that matters.
+# The repo root keeps symlinks to both so the Claude Code skill layout, which
+# requires SKILL.md at the skill root, still resolves.
+veros = ["SKILL.md", "references/*.md", "references/**/*.md"]

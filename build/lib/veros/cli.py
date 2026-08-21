@@ -3,6 +3,7 @@
 
 Subcommands:
     init     scaffold the audit/ markdown the report expects a human to write
+    docs     show the methodology that ships with Veros (scenario library, ...)
     doctor   Step 0 - environment health check (is this project scannable)
     scan     Step 1 - run Slither, filter to project source, collect env info
     review   Step 2 - lint classification.json for the things a machine can check
@@ -35,6 +36,7 @@ SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SUBCOMMANDS = {
     "init": "init_audit.py",
+    "docs": "docs.py",
     "doctor": "env_check.py",
     "scan": "scan.py",
     "review": "review.py",

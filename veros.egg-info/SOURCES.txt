@@ -1,8 +1,10 @@
 README.md
 pyproject.toml
+veros/SKILL.md
 veros/__init__.py
 veros/build_report.py
 veros/cli.py
+veros/docs.py
 veros/env_check.py
 veros/filter_results.py
 veros/init_audit.py
@@ -16,3 +18,9 @@ veros.egg-info/dependency_links.txt
 veros.egg-info/entry_points.txt
 veros.egg-info/requires.txt
 veros.egg-info/top_level.txt
+veros/references/logic_scan.md
+veros/references/pitfalls.md
+veros/references/severity_grading.md
+veros/references/domain_incidents/README.md
+veros/references/domain_incidents/account-abstraction.md
+veros/references/domain_incidents/rwa.md
