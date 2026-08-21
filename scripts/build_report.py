@@ -1017,38 +1017,32 @@ def format_description(desc: str, label: str = "說明") -> list[str]:
     return out
 
 def render_finding_detail(item, label=None, id_to_label=None):
-    sev = item.get("severity")
-    impact = item.get("impact")
-    sev_cell = sev or "—"
-    if impact and IMPACT_AS_INDUSTRY.get(impact) != sev:
-        sev_cell += f"（工具 impact：{impact}）"
-    rows = [
-        ("嚴重度", sev_cell),
-        ("處置", CATEGORY_LABEL.get(item.get("category"), str(item.get("category")))),
-    ]
-    # Remediation progress only means something for items that still need
-    # action. B and C are permanent determinations — printing "待處理" next to a
-    # false positive reads as an outstanding task that will never be done.
-    if item.get("category") in ("A", "D", None):
-        rows.append(("狀態", item.get("status") or DEFAULT_STATUS))
-    rows.append(("位置", f"`{item_location(item)}`"))
-    if item.get("scenario"):
-        rows.append(("命中情境", item["scenario"]))
     label = label or item.get("id")
+    rows = []
+    # A labelled finding carries its severity in the label itself ([M-10] is a
+    # Medium), so repeating it in the table is one more row to read for nothing.
+    # Unlabelled ones (false positives, headed by their scan id) still need it.
+    if not is_real_finding(item):
+        sev = item.get("severity") or "—"
+        impact = item.get("impact")
+        if impact and IMPACT_AS_INDUSTRY.get(impact) != item.get("severity"):
+            sev += f"（工具 impact：{impact}）"
+        rows.append(("嚴重度", sev))
+    rows.append(("處置", CATEGORY_LABEL.get(item.get("category"), str(item.get("category")))))
+    rows.append(("位置", f"`{item_location(item)}`"))
     id_to_label = id_to_label or {}
     ref = lambda t: relabel_refs(t, id_to_label)
     heading = f"[{label}] {item_title(item)}" if is_real_finding(item) else f"{item.get('id')}｜{item_title(item)}"
     out = [f"#### {heading}", ""]
-    # The scan id stays visible as provenance: the [S-#] label is derived from
-    # severity and renumbers, so it is not what a client quotes back at us when
-    # correlating against their own rescan.
-    if is_real_finding(item) and item.get("id"):
-        rows.insert(0, ("掃描編號", item["id"]))
     out += ["| | |", "|---|---|"]
     out += [f"| {k} | {v} |" for k, v in rows]
     out.append("")
+    impact = item.get("impact")
     if item.get("severity_rationale"):
-        out += [f"**嚴重度調整理由**：{ref(item['severity_rationale'])}", ""]
+        downgrade = ""
+        if impact and IMPACT_AS_INDUSTRY.get(impact) != item.get("severity"):
+            downgrade = f"（工具判 {impact}，本報告判 {item.get('severity')}）"
+        out += [f"**嚴重度調整理由**{downgrade}：{ref(item['severity_rationale'])}", ""]
 
     if not is_real_finding(item):
         # Examined and dismissed: the load-bearing content is why it does not

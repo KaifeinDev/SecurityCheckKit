@@ -76,6 +76,14 @@ BOLD_SIBLINGS = {
     "NotoSansCJKtc-Regular.otf": "NotoSansCJKtc-Bold.otf",
 }
 
+# Tables at or below this many rows are kept whole: they are metadata blocks,
+# not data listings, and splitting one costs more than the whitespace saved.
+KEEP_TOGETHER_ROWS = 6
+
+# Longest inline-code span whose spaces are made non-breaking. Beyond this a
+# span could exceed the text column, leaving fpdf2 no legal break point.
+MAX_NOBREAK_SPAN = 40
+
 FONT_CACHE_DIR = os.path.expanduser("~/.cache/security-check-kit/fonts")
 
 
@@ -186,8 +194,24 @@ def neutralize_markdown_delimiters(text: str) -> str:
 
 def strip_code_markup(text: str) -> str:
     """Drop inline-code backticks but keep **bold** markers intact — those are
-    rendered by fpdf2's own markdown=True, not manually stripped."""
-    return neutralize_markdown_delimiters(re.sub(r"`(.*?)`", r"\1", text))
+    rendered by fpdf2's own markdown=True, not manually stripped.
+
+    Spaces inside a code span become non-breaking first. Line breaking happens
+    at spaces, and the only spaces in an otherwise CJK sentence are the ones
+    inside the code — so `params.length != 0` was a preferred break point and
+    wrapped after the `!=`, splitting one expression across two lines. The
+    backticks are gone by the time the text reaches the renderer, so this is
+    the last point at which the span's extent is still known."""
+    def keep_together(m):
+        span = m.group(1)
+        # Only short spans. A non-breaking run wider than the text column has
+        # no break point left and fpdf2 raises "Not enough horizontal space to
+        # render a single character" rather than overflowing.
+        if len(span) > MAX_NOBREAK_SPAN:
+            return span
+        return span.replace(" ", "\u00a0")
+
+    return neutralize_markdown_delimiters(re.sub(r"`(.*?)`", keep_together, text))
 
 
 SEVERITY_RE = re.compile(r"嚴重度[：:]\s*([A-Za-z]+)")
@@ -449,6 +473,18 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
     pdf.add_page()
     pdf.set_font("Body", "", 11)
 
+    def draw_table_frame(x, y, w, h, rounded=True):
+        if h <= 0:
+            return
+        pdf.set_draw_color(*GRAY_700)
+        pdf.set_line_width(0.6)
+        if rounded:
+            pdf.rect(x, y, w, h, round_corners=True, corner_radius=2.5)
+        else:
+            pdf.rect(x, y, w, h)
+        pdf.set_draw_color(0, 0, 0)
+        pdf.set_line_width(0.2)
+
     def para(text, size=11, style="", gap=6, color=None):
         pdf.set_font("Body", style, size)
         # A table rendered just before this can leave the x cursor mid-page;
@@ -526,8 +562,16 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
         col_width = page_width / ncols
         line_height = 5
         x0 = pdf.l_margin
+        # A finding's metadata table is a handful of rows that belong together;
+        # letting two of them slide onto the next page orphans the rest under a
+        # header they no longer sit beneath. Break before the table instead.
+        if len(parsed) <= KEEP_TOGETHER_ROWS:
+            needed = len(parsed) * line_height + 4
+            if pdf.get_y() + needed > pdf.page_break_trigger:
+                pdf.add_page()
         table_top_page = pdf.page_no()
         table_top_y = pdf.get_y()
+        split = False
         for i, row in enumerate(parsed):
             is_header = i == 0
             is_bold_row = is_header or any("**" in c for c in raw_cells[i])
@@ -543,6 +587,11 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
             ]
             row_height = max(len(lines) for lines in cell_lines) * line_height
             if pdf.get_y() + row_height > pdf.page_break_trigger:
+                # Close the outer frame around the part that stays on this page
+                # before leaving it — otherwise only the final segment gets a
+                # frame and every earlier page shows bare gridlines.
+                draw_table_frame(x0, table_top_y, col_width * ncols, pdf.get_y() - table_top_y, rounded=not split)
+                split = True
                 pdf.add_page()
                 table_top_page = pdf.page_no()
                 table_top_y = pdf.get_y()
@@ -577,18 +626,9 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
             pdf.set_draw_color(0, 0, 0)
             pdf.set_line_width(0.2)
             pdf.set_xy(x0, y0 + row_height)
-        table_bottom_y = pdf.get_y()
-        # 外框圓角僅在整張表未跨頁時繪製；跨頁的表格保留格線但不強行畫外框，
-        # 避免圓角矩形橫跨分頁邊界時的視覺錯誤。
-        if pdf.page_no() == table_top_page:
-            pdf.set_draw_color(*GRAY_700)
-            pdf.set_line_width(0.6)
-            pdf.rect(
-                x0, table_top_y, col_width * ncols, table_bottom_y - table_top_y,
-                round_corners=True, corner_radius=2.5,
-            )
-            pdf.set_draw_color(0, 0, 0)
-            pdf.set_line_width(0.2)
+        # 每個分頁片段各自收框：未跨頁時圓角，跨頁片段用直角，
+        # 讓斷開處看起來是被切斷而不是一個畫歪的圓角矩形。
+        draw_table_frame(x0, table_top_y, col_width * ncols, pdf.get_y() - table_top_y, rounded=not split)
         pdf.ln(4)
         pdf.set_x(pdf.l_margin)
 
