@@ -22,6 +22,9 @@ veros.egg-info/dependency_links.txt
 veros.egg-info/entry_points.txt
 veros.egg-info/requires.txt
 veros.egg-info/top_level.txt
+veros/assets/bsos_logo_header.png
+veros/assets/cover_template.png
+veros/assets/gradient_bar.png
 veros/references/logic_scan.md
 veros/references/pitfalls.md
 veros/references/severity_grading.md

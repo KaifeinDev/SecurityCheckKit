@@ -167,7 +167,7 @@ veros run --apply --client "<甲方名稱>"  # 套用 → review → report
 
 ```bash
 # 安裝（一次）
-pip install git+https://github.com/KaifeinDev/veros.git
+python3 -m pip install --user git+https://github.com/KaifeinDev/veros.git
 
 # Step -1：產出 audit/overview.md 與 audit/scope_note.md 範本（只需一次）
 veros init
@@ -244,6 +244,23 @@ veros report --client "<甲方名稱>" \
 - `--font` 可指定 CJK 字型路徑（對應 `md_to_pdf.py` 的 `SECURITY_SCAN_CJK_FONT`）
 
 ### 環境安裝
+
+```bash
+# Veros 本身。用 `python3 -m pip` 而不是 `pip` —— macOS 沒有 `pip` 這個指令，
+# 而 `pip3` 有可能指向跟你的 `python3` 不同的直譯器。
+python3 -m pip install --user git+https://github.com/KaifeinDev/veros.git
+```
+
+裝完若看到 `The script veros is installed in '.../bin' which is not on PATH`，
+把那個目錄加進 PATH 才能直接打 `veros`（macOS 系統 Python 通常是
+`~/Library/Python/3.9/bin`）：
+
+```bash
+echo 'export PATH="$HOME/Library/Python/3.9/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+```
+
+**Python 版本**：3.9 以上皆可。3.9 會裝到 fpdf2 2.8.4，3.10+ 會裝到 2.8.8 以上；
+兩者都可用，中間的 2.8.7 有字型子集化 bug 已在依賴中排除（見 `veros docs pitfalls` 第 6 條）。
 
 ```bash
 # Slither（建議裝在 venv，避免污染系統 python）

@@ -357,7 +357,11 @@ COLOR_BANNER_TEXT = RED_700
 # designer's mockup was cut out (see cover_blanked crop step in dev history)
 # so real values can be drawn on top at build time; the title and field
 # labels are baked into the image since they're constant across reports.
-COVER_TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "cover_template.png")
+# Inside the package, not beside it: a pip install only carries what is
+# declared as package data, and a report with no cover and no logo is not
+# obviously broken — it just quietly stops looking like a BSOS document.
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+COVER_TEMPLATE_PATH = os.path.join(ASSETS_DIR, "cover_template.png")
 _COVER_IMG_W, _COVER_IMG_H = 1240, 1754  # px, matches the asset above
 # Bounding boxes measured directly off the 300dpi source render (2481x3509)
 # by isolating non-background pixels per text row, then halved for the
@@ -374,8 +378,8 @@ COVER_DATE_RE = re.compile(r"^\*\*檢測日期\*\*[:：]\s*(.+)$")
 # §1.4/1.5 gradient accent built from the cover's own Sky 300/Lime 400/Violet
 # 500 stops). Both are optional: missing either just degrades to no logo /
 # no gradient bar rather than failing the build.
-LOGO_HEADER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "bsos_logo_header.png")
-GRADIENT_BAR_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "gradient_bar.png")
+LOGO_HEADER_PATH = os.path.join(ASSETS_DIR, "bsos_logo_header.png")
+GRADIENT_BAR_PATH = os.path.join(ASSETS_DIR, "gradient_bar.png")
 HEADER_META_GRAY = (138, 147, 161)  # slate gray sampled from the designer's report_BSOS.pdf mockup header/footer
 
 

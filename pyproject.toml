@@ -9,12 +9,17 @@ description = "Smart contract security scan pipeline: Slither scan, triage, deli
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Proprietary" }
-# fpdf2 2.8.8 is the floor for the subsetting fix in references/pitfalls.md #6;
+# The excluded version is the point: fpdf2 2.8.7 has the font-subsetting bug in
+# references/pitfalls.md #6, which silently draws wrong glyphs on the cover of a
+# multi-page report — no exception, just a corrupt PDF. 2.8.8 fixes it and 2.8.4
+# predates it (verified on this pipeline's own fixtures). Pinning >=2.8.8
+# instead would have been simpler and wrong: it needs Python 3.10, so on the
+# 3.9 that ships with macOS pip cannot satisfy the package at all.
 # matplotlib draws the severity chart. Slither and Foundry are NOT declared:
 # they are external binaries the project under audit needs, not Python
 # dependencies of this package, and `veros doctor` reports on them.
 dependencies = [
-    "fpdf2>=2.8.8",
+    "fpdf2>=2.8.4,!=2.8.7",
     "matplotlib",
     # `veros triage` only. Everything else runs without it, so the import sits
     # inside the command rather than at module load — a report-only user who
@@ -35,6 +40,9 @@ packages = ["veros"]
 # incident research — and SKILL.md is what drives an LLM through the whole
 # thing. A pip install without them leaves the deterministic half of the
 # pipeline and none of the judgement, which is the half that matters.
-# The repo root keeps symlinks to both so the Claude Code skill layout, which
-# requires SKILL.md at the skill root, still resolves.
-veros = ["SKILL.md", "references/*.md", "references/**/*.md"]
+# assets/ is here for the same reason: the cover page, the BSOS logo and the
+# gradient rule are optional at render time, so leaving them out of the wheel
+# produced a report that looked plausible and carried none of the branding.
+# The repo root keeps symlinks to SKILL.md and references/ so the Claude Code
+# skill layout, which requires SKILL.md at the skill root, still resolves.
+veros = ["SKILL.md", "references/*.md", "references/**/*.md", "assets/*.png"]
