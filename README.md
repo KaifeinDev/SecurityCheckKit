@@ -141,6 +141,17 @@ veros confirm ISL-02 ...    # 確認你已讀過的
 veros report                # 重新評定
 ```
 
+**不想另外付 API credits**（你已經有 Claude Code 之類的訂閱）：
+
+```bash
+veros triage --emit-brief     # 把判讀任務寫成自足的工單檔案，不打 API
+# 讓你的 agent 讀 audit/scan/brief/README.md 逐份完成，結果寫進 brief/results/
+veros triage --apply-brief    # Veros 驗證後併入，一樣標記為草稿
+```
+
+工單裡已包含原始碼、情境庫與 schema，不需要 API key。驗證留在 Veros 這邊 ——
+分類值、必填欄位、編號對得上掃描結果，不合格的會列出來且不寫入。
+
 **逐步執行**
 
 ```bash

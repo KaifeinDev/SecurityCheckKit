@@ -5,6 +5,8 @@ fields a human would otherwise type.
     veros triage                       # audit/scan/classification_skeleton.json -> classification.json
     veros triage --dry-run             # what it would send, and the token estimate
     veros triage --only ISL-02 ISL-05  # redo specific findings
+    veros triage --emit-brief          # no API: hand the work to an agent you already pay for
+    veros triage --apply-brief         # validate what that agent wrote, then merge it
 
 Every entry this writes carries `ai_drafted: true`. The delivery gate refuses to
 grade a case as deliverable while any of those remain, and `veros confirm` is
@@ -22,6 +24,13 @@ Two passes, because they ask different questions:
 The methodology (scenario library, grading standard) goes in the system prompt
 behind a cache breakpoint, so it is written once and read cheaply on every
 subsequent call rather than re-billed per batch.
+
+--emit-brief writes those same prompts to disk instead of sending them, for
+callers who already pay for an agent subscription and would otherwise be buying
+API credits to run the identical work twice over. The schema check does not move
+with them: --apply-brief validates every returned entry against the same rules
+the report enforces, so what an agent hands back is trusted no further than what
+the API hands back.
 """
 import argparse
 import json
@@ -245,6 +254,192 @@ def scan_scenarios(client, model, effort, project_dir, rel_path):
     return call_tool(client, model, effort, system_blocks(), body, SCENARIO_TOOL)
 
 
+BRIEF_README = """# Veros 判讀工單
+
+這個目錄裡的每個 `task-*.md` 是一份獨立的判讀任務，內容已經包含判斷所需的全部材料
+（原始碼、待判的發現、方法論）。設計成不打 Anthropic API 也能完成 —— 由你現在使用的
+agent（例如 Claude Code）直接執行，走的是既有訂閱而不是另外計費的 API credits。
+
+## 怎麼做
+
+逐一讀取每個 `task-*.md`，照裡面的指示判斷，把結果寫成 JSON 存到：
+
+    results/<與 task 同名>.json
+
+JSON 的形狀就是該 task 檔案末尾 `## 回傳格式` 那段的 schema，**不要自己改欄位名**。
+
+## 做完之後
+
+    veros triage --apply-brief
+
+Veros 會逐筆驗證欄位（分類值、必填欄位、編號是否對得上掃描結果），把結果併進
+classification.json 並全部標記為 `ai_drafted`。驗證不通過的會列出來、不會寫入 ——
+schema 的把關留在 Veros，不倚賴 agent 自律。
+
+之後照常 `veros confirm` 人工簽核、`veros report`。在確認完成前閘門一律不判為可交付。
+"""
+
+
+def _schema_hint(tool) -> str:
+    return json.dumps(tool["input_schema"], ensure_ascii=False, indent=2)
+
+
+def emit_brief(args, data, by_file, contracts) -> None:
+    """Write self-contained task files for an external agent to work through.
+
+    Same materials the API path sends, on disk instead of over the wire: the
+    caller already pays for an agent subscription, and making them buy API
+    credits to run the same prompts is a worse deal than handing the prompts
+    over. The schema check stays on the Veros side (--apply-brief), so this
+    trades away nothing except who executes the model call."""
+    brief_dir = args.brief_dir or os.path.join(args.scan_dir, "brief")
+    os.makedirs(os.path.join(brief_dir, "results"), exist_ok=True)
+    system = system_blocks()[0]["text"]
+    tasks = []
+
+    for path, group in sorted(by_file.items()):
+        name = "task-classify-" + path.replace("/", "_").replace(".sol", "")
+        src = excerpt(args.project_dir, path, None)
+        listing = "\n".join(
+            f"### {f['id']}\ndetector: {f.get('check')}\n"
+            f"工具判定 impact: {f.get('impact')}\n"
+            f"位置: {f.get('file')}:{f.get('lines')}\n"
+            f"工具描述:\n{(f.get('description') or '').strip()}\n"
+            for f in group
+        )
+        body = (
+            f"# {name}\n\n{system}\n\n---\n\n"
+            f"以下 {len(group)} 筆發現都位於 `{path}`。逐筆判斷，每一筆都要出現在結果中。\n\n"
+            f"## 原始碼（{path}，含行號）\n\n```solidity\n{src}\n```\n\n"
+            f"## 待分類的發現\n\n{listing}\n\n"
+            f"## 回傳格式\n\n寫入 `results/{name}.json`，形狀為：\n\n"
+            f"```json\n{_schema_hint(CLASSIFY_TOOL)}\n```\n"
+        )
+        with open(os.path.join(brief_dir, name + ".md"), "w", encoding="utf-8") as fh:
+            fh.write(body)
+        tasks.append({"name": name, "kind": "classify", "file": path, "findings": len(group)})
+
+    if not args.skip_scenarios:
+        for path in contracts:
+            full = os.path.join(args.project_dir, path)
+            if not os.path.isfile(full):
+                continue
+            with open(full, encoding="utf-8", errors="replace") as fh:
+                src = fh.read()
+            if len(src) > MAX_SOURCE_CHARS:
+                continue
+            name = "task-scenario-" + path.replace("/", "_").replace(".sol", "")
+            numbered = "".join(f"{i + 1:5d} | {line}\n" for i, line in enumerate(src.splitlines()))
+            body = (
+                f"# {name}\n\n{system}\n\n---\n\n"
+                f"對 `{path}` 逐條比對上面的情境庫。兩段式判定：先看合約是否具備該情境的前置條件，"
+                "有才逐行讀關鍵語句確認。命中的才回報；沒有命中就回傳空陣列，不要硬湊。\n\n"
+                f"```solidity\n{numbered}\n```\n\n"
+                f"## 回傳格式\n\n寫入 `results/{name}.json`，形狀為：\n\n"
+                f"```json\n{_schema_hint(SCENARIO_TOOL)}\n```\n"
+            )
+            with open(os.path.join(brief_dir, name + ".md"), "w", encoding="utf-8") as fh:
+                fh.write(body)
+            tasks.append({"name": name, "kind": "scenario", "file": path})
+
+    with open(os.path.join(brief_dir, "README.md"), "w", encoding="utf-8") as fh:
+        fh.write(BRIEF_README)
+    with open(os.path.join(brief_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump({"tasks": tasks}, fh, ensure_ascii=False, indent=2)
+
+    print(f"已寫出 {len(tasks)} 份工單到 {brief_dir}/")
+    print(f"讓你的 agent 讀 {brief_dir}/README.md 執行，完成後跑 `veros triage --apply-brief`。")
+
+
+VALID_CATEGORY = {"A", "B", "C", "D"}
+VALID_SEVERITY = {"Critical", "High", "Medium", "Low", "Informational"}
+
+
+def _validate_classification(item, index):
+    """Same rules the report enforces, applied before anything is written."""
+    # Compared as text on both sides: the tool schema declares id as a string,
+    # while an older skeleton may carry integers. A type mismatch here would
+    # silently reject every finding as "not in the scan results".
+    ident = str(item.get("id"))
+    if ident not in index:
+        return f"編號 {ident!r} 不在掃描結果中"
+    if item.get("category") not in VALID_CATEGORY:
+        return f"{ident}: category {item.get('category')!r} 無效"
+    if item.get("severity") not in VALID_SEVERITY:
+        return f"{ident}: severity {item.get('severity')!r} 無效"
+    if not (item.get("dev_note") or "").strip():
+        return f"{ident}: dev_note 空白 —— 判斷依據是分類唯一的憑據"
+    if item["category"] in ("A", "D"):
+        for field in ("title", "explanation", "impact_detail", "proof_of_concept"):
+            if not (item.get(field) or "").strip():
+                return f"{ident}: 分類為 {item['category']} 但 {field} 空白"
+    if item["category"] == "A" and not (item.get("remediation") or "").strip():
+        return f"{ident}: 分類為 A 但沒有 remediation"
+    return None
+
+
+def apply_brief(args, data) -> None:
+    brief_dir = args.brief_dir or os.path.join(args.scan_dir, "brief")
+    results_dir = os.path.join(brief_dir, "results")
+    if not os.path.isdir(results_dir):
+        sys.exit(f"找不到 {results_dir} —— 先跑 `veros triage --emit-brief`，讓 agent 完成後再套用。")
+
+    index = {str(f["id"]): f for f in data.get("findings", [])}
+    manual = data.setdefault("manual_findings", [])
+    errors, filled, added = [], 0, 0
+
+    for name in sorted(os.listdir(results_dir)):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(results_dir, name)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"{name}: 讀不了（{exc}）")
+            continue
+
+        for item in payload.get("findings", []):
+            if "task-scenario-" in name:
+                if not (item.get("dev_note") or "").strip():
+                    errors.append(f"{name}: 情境發現缺 dev_note")
+                    continue
+                item.update({
+                    "id": f"{_prefix(data)}-{900 + len(manual)}",
+                    "source": "manual",
+                    "ai_drafted": True,
+                })
+                manual.append(item)
+                added += 1
+                continue
+
+            problem = _validate_classification(item, index)
+            if problem:
+                errors.append(f"{name}: {problem}")
+                continue
+            entry = index[str(item["id"])]
+            for field in ("category", "severity", "severity_rationale", "dev_note",
+                          "title", "explanation", "impact_detail",
+                          "proof_of_concept", "remediation"):
+                if item.get(field):
+                    entry[field] = item[field]
+            entry["ai_drafted"] = True
+            filled += 1
+
+    if errors:
+        print(f"有 {len(errors)} 筆未通過驗證，未寫入：", file=sys.stderr)
+        for e in errors[:20]:
+            print(f"  - {e}", file=sys.stderr)
+        if len(errors) > 20:
+            print(f"  ...另有 {len(errors) - 20} 筆", file=sys.stderr)
+
+    out_path = os.path.join(args.scan_dir, "classification.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+    print(f"\n已寫入 {out_path}：{filled} 筆掃描發現、{added} 筆情境庫發現，全部標記為 AI 草稿。")
+    print("下一步：`veros review`，逐筆複核後 `veros confirm`，再跑 `veros report`。")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -257,6 +452,16 @@ def main() -> None:
     parser.add_argument("--only", nargs="*", help="只重跑指定編號的發現")
     parser.add_argument("--skip-scenarios", action="store_true", help="跳過情境庫比對（只做逐筆分類）")
     parser.add_argument("--dry-run", action="store_true", help="只顯示會送出什麼，不呼叫 API")
+    parser.add_argument(
+        "--emit-brief", action="store_true",
+        help="不打 API，改把每一批的完整判讀任務寫成檔案，交給你現有的 agent 執行"
+             "（走既有訂閱，不另外消耗 API credits）",
+    )
+    parser.add_argument(
+        "--apply-brief", action="store_true",
+        help="把 agent 完成的工單結果驗證後併進 classification.json",
+    )
+    parser.add_argument("--brief-dir", help="工單目錄，預設 <scan-dir>/brief")
     args = parser.parse_args()
 
     skeleton_path = os.path.join(args.scan_dir, "classification_skeleton.json")
@@ -278,6 +483,10 @@ def main() -> None:
         by_file.setdefault(f.get("file", "?"), []).append(f)
     contracts = sorted(p for p in by_file if p.endswith(".sol"))
 
+    if args.apply_brief:
+        apply_brief(args, data)
+        return
+
     if args.dry_run:
         print(f"待分類 {len(findings)} 筆，分成 {len(by_file)} 批（依檔案）：")
         for path, group in sorted(by_file.items()):
@@ -288,8 +497,12 @@ def main() -> None:
               f"共約 {len(by_file) + (0 if args.skip_scenarios else len(contracts))} 次 API 呼叫。")
         return
 
+    if args.emit_brief:
+        emit_brief(args, data, by_file, contracts)
+        return
+
     client, model, effort = client_and_kwargs(args)
-    index = {f["id"]: f for f in data.get("findings", [])}
+    index = {str(f["id"]): f for f in data.get("findings", [])}
     filled = 0
 
     for path, group in sorted(by_file.items()):
@@ -299,7 +512,7 @@ def main() -> None:
             print(f"  模型未回傳結果，跳過 {path}", file=sys.stderr)
             continue
         for item in result.get("findings", []):
-            entry = index.get(item.get("id"))
+            entry = index.get(str(item.get("id")))
             if not entry:
                 continue
             for field in ("category", "severity", "severity_rationale", "dev_note",
