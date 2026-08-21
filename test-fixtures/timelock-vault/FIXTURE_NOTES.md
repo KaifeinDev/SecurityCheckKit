@@ -54,6 +54,11 @@ python3 ../../scripts/cli.py report \
   --before security-scan-report/results_before.json \
   --classification security-scan-report/classification.json \
   --env security-scan-report/scan_env.json \
+  --scope security-scan-report/scope.json \
+  --overview audit/overview.md \
+  --client "（測試夾具）" \
+  --engagement-from 2026-08-14 --engagement-to 2026-08-14 \
+  --worksheet audit/worksheet.md \
   --out-dir security-scan-report
 # 預期：資安等級第二級、exit code 0、report.md 開頭無「內部工作版本」浮水印
 ```
