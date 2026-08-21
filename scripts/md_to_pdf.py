@@ -80,19 +80,9 @@ BOLD_SIBLINGS = {
 # not data listings, and splitting one costs more than the whitespace saved.
 KEEP_TOGETHER_ROWS = 6
 
-# Longest inline-code span whose spaces are made non-breaking. Beyond this a
-# span could exceed the text column, leaving fpdf2 no legal break point.
-MAX_NOBREAK_SPAN = 40
-
 # Widest bound run, in half-width units (a CJK character counts 2). The text
 # column fits roughly 95; staying under that guarantees a bound run always has
 # somewhere legal to break, which is the condition fpdf2 raises on.
-# A bound run may exceed one line as long as it is CJK — fpdf2 breaks between
-# two CJK characters, so it always has somewhere legal to go. It cannot break
-# inside an identifier, so a run carrying a Latin token this long keeps its
-# spaces: without them fpdf2 raises rather than overflowing.
-MAX_LATIN_RUN = 14
-
 FONT_CACHE_DIR = os.path.expanduser("~/.cache/security-check-kit/fonts")
 
 
@@ -201,35 +191,106 @@ _CJK = "\u3000-\u303f\u3040-\u30ff\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef"
 _IS_CJK = re.compile(f"[{_CJK}]")
 
 
-_LONG_LATIN = re.compile(r"[A-Za-z0-9_.:/()\[\]{}<>=!+*-]{%d,}" % (MAX_LATIN_RUN + 1))
 
 
-def bind_cjk_gaps(text: str) -> str:
-    """Make spaces that touch CJK non-breaking, where that is safe.
+# Characters that may not begin a line, and those that may not end one — the
+# CJK typesetting rule usually called 避頭尾 / kinsoku.
+# Slack left between our wrapped line and the true column width. fpdf2
+# re-measures each line when it renders and will break it again if its own
+# figure comes out wider than ours by even a hair — falling back to the very
+# rule this wrapper exists to replace. A couple of millimetres costs nothing
+# and keeps that from happening.
+WRAP_SAFETY_MM = 2.0
 
-    fpdf2 fills a line and then backtracks to the last space, preferring it
-    however far back it sits. In Chinese sprinkled with Latin identifiers that
-    ends a line at the last space and leaves the rest of it blank — `影響：同`
-    on one line and the whole sentence on the next. Chinese needs no break at
-    those spaces, so removing them as candidates lets the break fall inside the
-    CJK run and the line fill.
+NO_LINE_START = "。，、．：；！？）」』】〉》〕｝·・…‧%"
+NO_LINE_END = "（「『【〈《〔｛$"
 
-    Length is deliberately not capped: a bound run wider than the column is
-    fine while it is CJK, because fpdf2 can break between any two CJK
-    characters. What it cannot do is break inside an identifier, so the guard
-    is on Latin content, not on size — capping size instead left exactly the
-    long-CJK case this exists to fix still breaking early."""
-    parts = text.split(" ")
-    out = [parts[0]] if parts else [""]
-    for nxt in parts[1:]:
-        prev = out[-1]
-        touches_cjk = bool(prev and nxt and (_IS_CJK.search(prev[-1]) or _IS_CJK.search(nxt[0])))
-        risky = _LONG_LATIN.search(prev) or _LONG_LATIN.search(nxt)
-        if touches_cjk and not risky:
-            out[-1] = prev + "\u00a0" + nxt
-        else:
-            out.append(nxt)
-    return " ".join(out)
+
+def _wrap_units(text: str):
+    """Split into (char, bold) pairs, consuming the ** markers."""
+    units, bold, i = [], False, 0
+    while i < len(text):
+        if text.startswith("**", i):
+            bold = not bold
+            i += 2
+            continue
+        units.append((text[i], bold))
+        i += 1
+    return units
+
+
+def wrap_to_width(pdf, text: str, width: float, size: float, style: str = ""):
+    """Break `text` into lines that fit `width`, and return them re-marked up.
+
+    fpdf2 fills a line and then backtracks to the last space, taking it however
+    far back it sits. That rule suits English, where every break is a space. In
+    Chinese the only spaces are the ones around the occasional Latin
+    identifier, so the break lands there and the rest of the line is left
+    blank — `影響：在重入視窗內，Pool` with eighty characters of Chinese
+    following it on the next line.
+
+    Chinese breaks between characters, so the break opportunities are computed
+    here instead: at spaces, and between two characters where either is CJK,
+    minus the ones 避頭尾 forbids. Widths are measured per character in the face
+    it will actually be drawn in, so a bold run is not underestimated.
+
+    Zero-width space would have been the smaller change — insert one between
+    each pair of CJK characters and let fpdf2 break there — but the CJK fonts
+    here have no glyph for it and fpdf2 falls back to a full-width advance,
+    which would pad every Chinese line to twice its width."""
+    units = _wrap_units(text)
+    if not units:
+        return [text]
+    width = max(width - WRAP_SAFETY_MM, 1.0)
+
+    widths = []
+    for ch, bold in units:
+        pdf.set_font("Body", "B" if bold else style, size)
+        widths.append(pdf.get_string_width(ch))
+    pdf.set_font("Body", style, size)
+
+    def may_break(k):
+        """Between units[k] and units[k+1]."""
+        left, right = units[k][0], units[k + 1][0]
+        if right in NO_LINE_START or left in NO_LINE_END:
+            return False
+        if left == " ":
+            return True
+        return bool(_IS_CJK.match(left) or _IS_CJK.match(right))
+
+    lines, start, used, last_break = [], 0, 0.0, -1
+    i = 0
+    while i < len(units):
+        used += widths[i]
+        if used > width and i > start:
+            # Break at the last opportunity, or mid-run if the line offers
+            # none — a line must always advance or this loop cannot end.
+            cut = last_break if last_break >= start else i - 1
+            lines.append(units[start:cut + 1])
+            start = cut + 1
+            while start < len(units) and units[start][0] == " ":
+                start += 1
+            used = sum(widths[start:i + 1])
+            last_break = -1
+            i = max(i, start)
+        if i + 1 < len(units) and may_break(i):
+            last_break = i
+        i += 1
+    if start < len(units):
+        lines.append(units[start:])
+
+    out = []
+    for line in lines:
+        buf, bold = [], False
+        for ch, is_bold in line:
+            if is_bold != bold:
+                buf.append("**")
+                bold = is_bold
+            buf.append(ch)
+        if bold:
+            buf.append("**")
+        out.append("".join(buf).rstrip())
+    return out
 
 
 def neutralize_markdown_delimiters(text: str) -> str:
@@ -247,15 +308,12 @@ def strip_code_markup(text: str) -> str:
     backticks are gone by the time the text reaches the renderer, so this is
     the last point at which the span's extent is still known."""
     def keep_together(m):
-        span = m.group(1)
-        # Only short spans. A non-breaking run wider than the text column has
-        # no break point left and fpdf2 raises "Not enough horizontal space to
-        # render a single character" rather than overflowing.
-        if len(span) > MAX_NOBREAK_SPAN:
-            return span
-        return span.replace(" ", "\u00a0")
+        # A code span's internal spaces stop being break candidates, so an
+        # expression stays whole. Safe at any length now that wrapping is ours:
+        # wrap_to_width() always emits at least one character per line.
+        return m.group(1).replace(" ", "\u00a0")
 
-    return bind_cjk_gaps(neutralize_markdown_delimiters(re.sub(r"`(.*?)`", keep_together, text)))
+    return neutralize_markdown_delimiters(re.sub(r"`(.*?)`", keep_together, text))
 
 
 SEVERITY_RE = re.compile(r"嚴重度[：:]\s*([A-Za-z]+)")
@@ -541,7 +599,9 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
         # into huge visible gaps. Left-align instead. markdown=True renders
         # **bold** spans in the real bold face registered above instead of
         # them being stripped to plain text.
-        pdf.multi_cell(0, gap, strip_code_markup(text), align="L", markdown=True)
+        avail = pdf.w - pdf.r_margin - pdf.get_x()
+        body = "\n".join(wrap_to_width(pdf, strip_code_markup(text), avail, size, style))
+        pdf.multi_cell(0, gap, body, align="L", markdown=True)
         if color:
             pdf.set_text_color(*COLOR_DEFAULT)
 
@@ -558,7 +618,9 @@ def build_pdf(md_path: str, pdf_path: str, font_path: str, bold_font_path: str =
         if color:
             pdf.set_text_color(*color)
         pdf.cell(5, gap, "•")
-        pdf.multi_cell(0, gap, strip_code_markup(text), align="L", markdown=True)
+        avail = pdf.w - pdf.r_margin - pdf.get_x()
+        body = "\n".join(wrap_to_width(pdf, strip_code_markup(text), avail, size))
+        pdf.multi_cell(0, gap, body, align="L", markdown=True)
         if color:
             pdf.set_text_color(*COLOR_DEFAULT)
 
