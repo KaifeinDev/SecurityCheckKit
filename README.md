@@ -124,6 +124,25 @@ audit/
 
 環境需求：Foundry（`forge`）、Slither（`slither`，可以裝在 venv）、系統 python 需要 `fpdf2`（見下方「環境安裝」）。
 
+**一行跑完（AI 起草）**
+
+```bash
+veros config --api-key sk-ant-...      # 或 export ANTHROPIC_API_KEY
+veros run --src-prefix src/ --client "<甲方名稱>"
+```
+
+`run` 依序跑 doctor → scan → AI 判讀 → review → report。**產出的是草稿**：模型寫的每一筆分類都
+標記為未經人工確認，閘門一律不判為可交付，PDF 第一頁就寫明。分類是這份報告唯一的可信度來源，
+必須有人逐筆看過：
+
+```bash
+veros confirm --list        # 還有哪些待確認
+veros confirm ISL-02 ...    # 確認你已讀過的
+veros report                # 重新評定
+```
+
+**逐步執行**
+
 ```bash
 # 安裝（一次）
 pip install git+<SecurityCheckKit 的 repo URL>
@@ -141,7 +160,8 @@ veros scan --src-prefix src/     # 預設寫到 ./audit/scan
 # 同一筆發現自動沿用上次的 category/dev_note（標記 carried_from_previous），
 # 只有新出現的留空待分類；上次的 manual_findings 原樣帶入待重新確認
 
-# Step 2：把 Step 1 產出的 classification_skeleton.json 複製成 classification.json，
+# Step 2（可用 AI 起草）：veros triage —— 依情境庫逐筆判讀並填好報告欄位，全部標記為草稿
+# 或手動：把 Step 1 產出的 classification_skeleton.json 複製成 classification.json，
 # 依 SKILL.md「Step 2」的分類標準，逐筆填入 category（A 已確認需修復 / B 可接受風險 /
 # C 誤報 / D 待確認）與 dev_note；預填的 check/impact/file/lines 不要動（Step 3 會核對）。
 # 另外必填：severity（業界五級）、降級時的 severity_rationale、A 類的 remediation、

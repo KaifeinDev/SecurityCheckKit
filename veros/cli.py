@@ -2,10 +2,13 @@
 """Veros — smart contract security scan pipeline.
 
 Subcommands:
+    run      the whole pipeline end to end, with the AI drafting Step 2
     init     scaffold the audit/ markdown the report expects a human to write
+    config   model and API key for the AI step
     docs     show the methodology that ships with Veros (scenario library, ...)
     doctor   Step 0 - environment health check (is this project scannable)
     scan     Step 1 - run Slither, filter to project source, collect env info
+    triage   Step 2 - have a model draft the classification
     review   Step 2 - lint classification.json for the things a machine can check
     confirm  Step 2 - sign off on AI-drafted classifications, one by one
     report   Step 3 - build report.md + report.pdf from the scan artifacts
@@ -36,10 +39,13 @@ import sys
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SUBCOMMANDS = {
+    "run": "run.py",
     "init": "init_audit.py",
+    "config": "config.py",
     "docs": "docs.py",
     "doctor": "env_check.py",
     "scan": "scan.py",
+    "triage": "triage.py",
     "review": "review.py",
     "confirm": "confirm.py",
     "report": "report.py",

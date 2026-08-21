@@ -16,6 +16,10 @@ license = { text = "Proprietary" }
 dependencies = [
     "fpdf2>=2.8.8",
     "matplotlib",
+    # `veros triage` only. Everything else runs without it, so the import sits
+    # inside the command rather than at module load — a report-only user who
+    # never touches the AI step should not need a working SDK install.
+    "anthropic>=0.40",
 ]
 
 [project.scripts]
