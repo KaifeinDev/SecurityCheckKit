@@ -2,7 +2,7 @@
 
 `vulnerable-vault` 是「第四級（不通過）」的 ground truth；這個 fixture 是光譜另一端的對照組：
 一份**本身寫得正確、但帶有典型「可接受風險」模式**的合約，完整走完 Step 1～4 後應判定
-**第二級（可交付，但需揭露已知風險）**，`cli.py report` 的 exit code 為 **0**（閘門通過），
+**第二級（可交付，但需揭露已知風險）**，`veros report` 的 exit code 為 **0**（閘門通過），
 報告開頭**不得**出現「內部工作版本」浮水印。
 
 兩個 fixture 合起來覆蓋交付閘門的兩側：改動判級邏輯後，vulnerable-vault 必須仍是第四級
@@ -50,7 +50,7 @@ vulnerable-vault 的報告是「工具原始輸出 = 交付版掃描結果」的
 
 ```bash
 cd test-fixtures/timelock-vault
-python3 ../../scripts/cli.py report \
+veros report \
   --before security-scan-report/results_before.json \
   --classification security-scan-report/classification.json \
   --env security-scan-report/scan_env.json \
@@ -66,7 +66,7 @@ python3 ../../scripts/cli.py report \
 `src/TimelockVault.sol.original`（無 slither-disable 註解的最原始版本）與
 `src/TimelockVault.sol`（Step 3 加上抑制註解後、實際交付的版本）兩份都保留在 repo 裡，
 方便直接比對兩個階段的差異。若要從頭重掃：把 `TimelockVault.sol.original` 換成
-`TimelockVault.sol` 跑 `cli.py scan` 得到 before/skeleton，再換回加了註解的版本重掃產
+`TimelockVault.sol` 跑 `veros scan` 得到 before/skeleton，再換回加了註解的版本重掃產
 after —— 順序反了會讓 before 變成 0 筆。
 
 **關於抑制註解**：本樣本保留 `src/TimelockVault.sol.original`（加註解前）與 `src/TimelockVault.sol`（加註解後）兩份，是抑制註解的唯一範例。2026-08 起這個動作已不是編號步驟，改為選配的 CI 衛生收尾（見 `SKILL.md` 最後一節）；報告也不再呈現加註解前後的數量對照。

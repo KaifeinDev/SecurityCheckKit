@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "veros"
+version = "0.1.0"
+description = "Smart contract security scan pipeline: Slither scan, triage, delivery report"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Proprietary" }
+# fpdf2 2.8.8 is the floor for the subsetting fix in references/pitfalls.md #6;
+# matplotlib draws the severity chart. Slither and Foundry are NOT declared:
+# they are external binaries the project under audit needs, not Python
+# dependencies of this package, and `veros doctor` reports on them.
+dependencies = [
+    "fpdf2>=2.8.8",
+    "matplotlib",
+]
+
+[project.scripts]
+veros = "veros.cli:main"
+
+[tool.setuptools]
+# Just the code. references/ and SKILL.md are read by a human (or an LLM doing
+# Step 2), never opened by these modules at runtime — they are cited in
+# comments and console messages only, so they stay in the repo rather than
+# riding along in site-packages where nobody would look for them.
+packages = ["veros"]

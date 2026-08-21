@@ -8,7 +8,7 @@ argument-hint: "[--full-audit]"
 
 這個 skill 把「Slither 掃描 → AI 分類 → 加抑制註解 → 產出完整 PDF 報告」固定成一個可重複執行的流程，用在 Foundry 專案（特別是使用 OpenZeppelin upgradeable 合約的專案）。
 
-Step 0/1/3（環境健檢、掃描、產報告）背後都是呼叫 `scripts/cli.py`（`check` / `scan` / `report`）—— 這幾個步驟是純確定性的，可以獨立於 Claude 執行、也可以接進 CI。Step 2（分類）需要工程判斷與 LLM 輔助，其中**機械性可檢查的部分**由 `cli.py review` 負責。加抑制註解已不再是編號步驟，改為選配的收尾動作（見本文件最後一節）。完整的架構說明、CLI 用法、輸出格式見 `README.md`。
+Step 0/1/3（環境健檢、掃描、產報告）背後都是呼叫 `veros`（`doctor` / `scan` / `report`）—— 這幾個步驟是純確定性的，可以獨立於 Claude 執行、也可以接進 CI。Step 2（分類）需要工程判斷與 LLM 輔助，其中**機械性可檢查的部分**由 `veros review` 負責。加抑制註解已不再是編號步驟，改為選配的收尾動作（見本文件最後一節）。完整的架構說明、CLI 用法、輸出格式見 `README.md`。
 
 **在開始前務必先讀 `references/pitfalls.md`** —— 裡面記錄了這個流程實測踩過的坑（`foundry.toml` 的 `src` 設定陷阱、OpenZeppelin 版本判斷、`slither-disable-next-line` 失效問題、PDF 中文字型問題），每一條都要遵守，不要重新踩雷。
 
@@ -24,7 +24,7 @@ Step 0/1/3（環境健檢、掃描、產報告）背後都是呼叫 `scripts/cli
 先跑：
 
 ```bash
-python3 .claude/skills/security-scan/scripts/cli.py check --src-prefix src/
+veros doctor --src-prefix src/
 ```
 
 這個指令會自動做：**偵測建置系統（Foundry 或 Hardhat）**、確認專案編譯得起來、掃描合約原始碼判斷是 OpenZeppelin v4 還是 v5 API 特徵（衝突時直接列出衝突點，不會自己猜版本）、蒐集 solc/slither/forge 版本。**exit code 0 代表環境已就緒，直接跳到 Step 1**；非 0 代表以下某項需要處理，對照輸出訊息排除：
@@ -42,12 +42,12 @@ python3 .claude/skills/security-scan/scripts/cli.py check --src-prefix src/
    - 根據錯誤訊息判斷是依賴問題還是合約本身問題
 3. `[oz-version] CONFLICTING`：代表合約混用了兩個大版本互斥的 API，這不是換依賴版本能解決的 → 停下來，具體列出衝突的呼叫點，問使用者要怎麼處理，不自行修改。
 4. `[versions] slither=unknown`：`slither` 未安裝，用 `pip install slither-analyzer` 並用 `solc-select` 裝對應 solc 版本。
-5. 排除以上問題後，重跑 `cli.py check` 直到 exit code 0。
+5. 排除以上問題後，重跑 `veros doctor` 直到 exit code 0。
 
 ## Step 1：Slither 掃描（自動）
 
 ```bash
-python3 .claude/skills/security-scan/scripts/cli.py scan \
+veros scan \
   --out-dir /tmp/security-scan \
   --src-prefix src/
 ```
@@ -79,7 +79,7 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 - **C. 可直接忽略（False Positive）**：工具因靜態分析限制誤判，實際上有安全機制保護（如已有 nonReentrant、已做過 zero-address 檢查、OZ upgradeable 的 `__gap` 慣例等）。
 - **D. 待人工確認**：信心不足，還無法判斷屬於 A/B/C 哪一類的項目。**信心不足時一律歸類 D，不要用猜的塞進 A/B/C。**
 
-**Step 2 的必填欄位**（`cli.py report` 會逐條驗證，缺了直接 exit 2、不產報告）：
+**Step 2 的必填欄位**（`veros report` 會逐條驗證，缺了直接 exit 2、不產報告）：
 
 - `severity`：業界五級（Critical／High／Medium／Low／Informational），**必填**。skeleton 已預填為工具 impact 的對應值，維持原值永遠不需要理由。
 - `severity_rationale`：只有**降級**（判得比工具輕）時必填。閘門讀的是唯讀的 `impact`，所以降級不會繞過閘門，但報告會並列印出兩個等級與這段理由，讓甲方能檢視這個判斷。
@@ -87,7 +87,7 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 - `confirm_what` / `confirm_who` / `confirm_branches`：`category = D` 必填三格——要確認什麼、問誰、兩種答案各自怎麼做。**D 類不得停在問句。**
 - `id`：統一編號（`<專案縮寫大寫>-<兩位數>`，如 `BGT-01`），掃描發現與人工發現共用同一序列、不得重複；原掃描序號留在 `scan_id`，不印進報告。
 
-**確認成立的發現要寫的四個欄位**（`category = A`／`D` 與全部 `manual_findings`）。報告依 Cyfrin 格式排版成 `[S-#] 標題` → 說明 → 影響 → 攻擊情境／重現方式 → 建議修法；缺的欄位會在報告中顯示「待補」並在 `cli.py report` 的 stdout 列出，不擋產出：
+**確認成立的發現要寫的四個欄位**（`category = A`／`D` 與全部 `manual_findings`）。報告依 Cyfrin 格式排版成 `[S-#] 標題` → 說明 → 影響 → PoC → 建議修法；缺的欄位會在報告中顯示「待補」並在 `veros report` 的 stdout 列出，不擋產出：
 
 - `title`：一句話標題，寫「根因 + 影響」而不是 detector 名稱。`reentrancy-eth` 是檢查器名稱，不是標題；「repayLoan 缺少 nonReentrant，重入期間份額價格虛高」才是。
 - `explanation`：哪個函式、正常應該怎麼運作、為什麼出錯。掃描工具的原始描述會另外獨立呈現，不要照抄。
@@ -157,7 +157,7 @@ python3 .claude/skills/security-scan/scripts/cli.py scan \
 **分類填完後先跑機械檢查**：
 
 ```bash
-python3 .claude/skills/security-scan/scripts/cli.py review \
+veros review \
   --classification /tmp/security-scan/classification.json
 ```
 
@@ -170,7 +170,7 @@ python3 .claude/skills/security-scan/scripts/cli.py review \
 ## Step 3：產出完整報告（自動）
 
 ```bash
-python3 .claude/skills/security-scan/scripts/cli.py report \
+veros report \
   --before /tmp/security-scan/results_before.json \
   --classification /tmp/security-scan/classification.json \
   --env /tmp/security-scan/scan_env.json \
@@ -194,11 +194,11 @@ python3 -m pip install --user --break-system-packages "fpdf2>=2.8.8"
 
 `fpdf2` 版本**建議 2.8.8 以上**：2.8.7 有一個字型子集化的靜默亂碼 bug，會把封面頁的短 ASCII 文字（`檢測工具`／`檢測日期`）畫錯但不拋例外，見 `pitfalls.md` #6。若環境的 python 只支援到 2.8.4（例如 macOS 內建的 Python 3.9），實測未重現該 bug，但**每次產出後仍要把封面頁轉成圖片目視確認**（`pdftoppm -png -f 1 -l 1 report.pdf /tmp/cover`）——這個 bug 不拋例外，`pdftotext` 也讀不出來。
 
-`cli.py report` 會自動探測「哪個 python 真的裝了 fpdf2」，就算目前在 slither 的 venv 底下執行也能找到系統 python；找不到時會清楚報錯並提示設定 `SECURITY_SCAN_REPORT_PYTHON` 環境變數指向正確的 python。
+`veros report` 會自動探測「哪個 python 真的裝了 fpdf2」，就算目前在 slither 的 venv 底下執行也能找到系統 python；找不到時會清楚報錯並提示設定 `SECURITY_SCAN_REPORT_PYTHON` 環境變數指向正確的 python。
 
-`md_to_pdf.py` 會自動找系統上的 CJK 字型（含優先嘗試將可變字重字型切出 Regular/Bold 兩個靜態字重，快取於 `~/.cache/security-check-kit/fonts/`，讓標題真正以粗體呈現而非只放大字級）；如果找不到，會清楚報錯並提示設定 `SECURITY_SCAN_CJK_FONT`（可選搭配 `SECURITY_SCAN_CJK_FONT_BOLD`）環境變數指向涵蓋中文字的字型檔（`.ttc`/`.ttf`），也可以用 `cli.py report --font <path> [--font-bold <path>]` 直接傳入。
+`md_to_pdf.py` 會自動找系統上的 CJK 字型（含優先嘗試將可變字重字型切出 Regular/Bold 兩個靜態字重，快取於 `~/.cache/security-check-kit/fonts/`，讓標題真正以粗體呈現而非只放大字級）；如果找不到，會清楚報錯並提示設定 `SECURITY_SCAN_CJK_FONT`（可選搭配 `SECURITY_SCAN_CJK_FONT_BOLD`）環境變數指向涵蓋中文字的字型檔（`.ttc`/`.ttf`），也可以用 `veros report --font <path> [--font-bold <path>]` 直接傳入。
 
-**`cli.py report` 的 exit code 就是交付閘門**（詳見 `references/severity_grading.md`）：
+**`veros report` 的 exit code 就是交付閘門**（詳見 `references/severity_grading.md`）：
 
 - `0` = 可交付
 - `3` / `4` = 不可交付 —— 報告照常產出，但開頭帶「內部工作版本 — 不可作為交付文件」標記，只能用於內部追蹤，**不可交給甲方**
@@ -232,7 +232,7 @@ python3 -m pip install --user --break-system-packages "fpdf2>=2.8.8"
 4. 改完後驗證：
    ```bash
    forge build
-   python3 .claude/skills/security-scan/scripts/cli.py scan \
+   veros scan \
      --out-dir /tmp/security-scan/after --src-prefix src/
    ```
    比對加註解前後的發現數量，並明確確認 `category` 為 A（已確認需修復）與 D（待確認）的項目仍然原封不動出現在新的掃描結果裡 —— 代表沒有被誤蓋掉。**報告不呈現這個前後對照**（報告只呈現當次掃描結果），這是純內部的驗證動作。

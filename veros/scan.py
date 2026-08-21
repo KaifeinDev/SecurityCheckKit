@@ -303,7 +303,10 @@ def print_summary(detectors):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--project-dir", default=".")
-    parser.add_argument("--out-dir", required=True)
+    parser.add_argument(
+        "--out-dir", default=os.path.join("audit", "scan"),
+        help="Step 1 產物的目錄，預設 ./audit/scan —— Veros 在一個專案裡寫的東西都在 audit/ 底下",
+    )
     parser.add_argument("--src-prefix", action="append", default=[], help="Repeatable. Defaults to src/.")
     parser.add_argument("--full-audit", action="store_true", help="Keep findings from lib/ dependencies too")
     parser.add_argument(

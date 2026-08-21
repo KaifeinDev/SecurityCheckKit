@@ -1,3 +1,13 @@
+Metadata-Version: 2.4
+Name: veros
+Version: 0.1.0
+Summary: Smart contract security scan pipeline: Slither scan, triage, delivery report
+License: Proprietary
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: fpdf2>=2.8.8
+Requires-Dist: matplotlib
+
 # SecurityCheckKit
 
 在交付前，使用此工具做靜態分析並生成簡易自檢報告，確保交付的品質穩定性。

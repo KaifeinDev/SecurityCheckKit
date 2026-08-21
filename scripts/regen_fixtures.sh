@@ -20,6 +20,9 @@
 #   e.g. scripts/regen_fixtures.sh /tmp/sck-baseline
 set -uo pipefail
 KIT="$(cd "$(dirname "$0")/.." && pwd)"
+# Run the working tree, not whatever `veros` happens to be installed — the
+# point is to test the code in front of you.
+VEROS=(python3 "$KIT/veros/cli.py")
 OUT="${1:?usage: regen_fixtures.sh <out-root>}"
 CLIENT="（測試夾具）"
 ENGAGED="2026-08-14"
@@ -29,7 +32,7 @@ for f in timelock-vault vulnerable-vault; do
   FIXTURE="$KIT/test-fixtures/$f"
   SRC="$FIXTURE/security-scan-report"
   mkdir -p "$OUT/$f"
-  python3 "$KIT/scripts/cli.py" report \
+  "${VEROS[@]}" report \
     --before "$SRC/results_before.json" \
     --classification "$SRC/classification.json" \
     --env "$SRC/scan_env.json" \

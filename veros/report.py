@@ -59,8 +59,8 @@ def find_report_python() -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
-        "--scan-dir",
-        help="Step 1 的 --out-dir。由它推出 --before/--classification/--env/--scope 的"
+        "--scan-dir", default=os.path.join("audit", "scan"),
+        help="Step 1 的 --out-dir，預設 ./audit/scan。由它推出 --before/--classification/--env/--scope 的"
              "預設路徑（results_before.json / classification.json / scan_env.json / "
              "scope.json），四者仍可個別指定覆蓋。找不到的檔案就當作未提供",
     )
@@ -85,25 +85,28 @@ def main() -> None:
     )
     parser.add_argument(
         "--overview",
-        help="markdown，內嵌為「摘要」章的協定理解：協定怎麼運作、資產保管、角色與權限",
+        help="markdown，內嵌為「摘要」章的協定理解：協定怎麼運作、資產保管、角色與權限。"
+             "未指定時取 ./audit/overview.md（veros init 產的範本位置）",
     )
     parser.add_argument(
         "--scope-note",
         help="markdown，接在「檢測範圍與方法」章末尾：本次偏離標準程序之處"
-             "（例如為了讓工具跑起來暫時改過原始碼，使部分檔案雜湊與交付版本不符）",
+             "（例如為了讓工具跑起來暫時改過原始碼，使部分檔案雜湊與交付版本不符）。"
+             "未指定時取 ./audit/scope_note.md，該檔不存在就當作無偏離",
     )
     parser.add_argument("--client", help="甲方名稱，出現在封面與報告標題")
     parser.add_argument("--engagement-from", help="檢測期間起日（YYYY-MM-DD）")
     parser.add_argument("--engagement-to", help="檢測期間迄日（YYYY-MM-DD）")
     parser.add_argument(
         "--worksheet",
-        help="內部工作底稿的輸出路徑。含內部語氣與全量逐筆明細，不可交付甲方；"
-             "預設寫到 <專案>/audit/worksheet.md 而非 --out-dir",
+        help="內部工作底稿的輸出路徑，預設 ./audit/worksheet.md。"
+             "含內部語氣與全量逐筆明細，不可交付甲方 —— 刻意放在 audit/ 根目錄而非 "
+             "audit/report/，交付時整個 report/ 拿走就不會夾帶它",
     )
     parser.add_argument(
-        "--out-dir", default="security-scan-report",
-        help="report.md 與 report.pdf 的輸出目錄（交付物）。預設 ./security-scan-report —— "
-             "刻意與工作底稿所在的 audit/ 分開，那裡放的是不可交付的內部文件",
+        "--out-dir", default=os.path.join("audit", "report"),
+        help="report.md 與 report.pdf 的輸出目錄（交付物），預設 ./audit/report。"
+             "audit/ 底下只有這個子目錄可以交付甲方，其餘是內部文件",
     )
     parser.add_argument("--font", help="指定 CJK 字型檔；省略時自動偵測（見 md_to_pdf.py）")
     parser.add_argument("--font-bold", help="指定粗體字型檔；省略時找同目錄的 Bold 檔")
@@ -128,8 +131,20 @@ def main() -> None:
                 candidate = os.path.join(args.scan_dir, filename)
                 if os.path.isfile(candidate):
                     setattr(args, flag, candidate)
+    # The two hand-written documents live at fixed names under audit/ because
+    # `veros init` puts them there; naming them on every run is noise.
+    for flag, default in (
+        ("overview", os.path.join("audit", "overview.md")),
+        ("scope_note", os.path.join("audit", "scope_note.md")),
+    ):
+        if not getattr(args, flag) and os.path.isfile(default):
+            setattr(args, flag, default)
+
     if not args.before:
-        parser.error("需要 --before，或用 --scan-dir 指向 Step 1 的輸出目錄")
+        parser.error(
+            f"找不到 {os.path.join(args.scan_dir, 'results_before.json')} —— "
+            "請先跑 `veros scan`，或用 --scan-dir/--before 指定位置"
+        )
 
     py = find_report_python()
 
@@ -147,11 +162,9 @@ def main() -> None:
             build_cmd += ["--" + flag.replace("_", "-"), value]
     if args.include_false_positives:
         build_cmd.append("--include-false-positives")
-    # The worksheet is an internal companion document, so it defaults NEXT TO
-    # the other internal notes (audit/) rather than into the delivery folder.
-    worksheet = args.worksheet or os.path.join(
-        os.path.dirname(os.path.abspath(args.out_dir)), "audit", "worksheet.md"
-    )
+    # The worksheet sits at audit/ root, one level above audit/report/, so that
+    # handing over the report directory cannot take the internal notes with it.
+    worksheet = args.worksheet or os.path.join("audit", "worksheet.md")
     build_cmd += ["--worksheet", worksheet]
     # The worksheet carries internal-voice notes and the full per-finding dump.
     # If its directory is tracked, it ships with the client's code. Warn only —
