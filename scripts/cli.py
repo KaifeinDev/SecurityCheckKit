@@ -4,6 +4,7 @@ usable by anyone with Python 3, Foundry, and Slither installed, no Claude
 Code required.
 
 Subcommands (each maps 1:1 to a SKILL.md step):
+    init    scaffold the audit/ markdown the report expects a human to write
     check   Step 0 - environment health check
     scan    Step 1 - run Slither, filter to project source, collect env info
     review  Step 2 - lint classification.json for the things a machine can check
@@ -24,6 +25,7 @@ import sys
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SUBCOMMANDS = {
+    "init": "init_audit.py",
     "check": "env_check.py",
     "scan": "scan.py",
     "review": "review.py",

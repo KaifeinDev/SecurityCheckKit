@@ -59,8 +59,15 @@ def find_report_python() -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
-        "--before", required=True,
-        help="Step 1 的 results_before.json：本次掃描過濾後的發現，報告的事實來源",
+        "--scan-dir",
+        help="Step 1 的 --out-dir。由它推出 --before/--classification/--env/--scope 的"
+             "預設路徑（results_before.json / classification.json / scan_env.json / "
+             "scope.json），四者仍可個別指定覆蓋。找不到的檔案就當作未提供",
+    )
+    parser.add_argument(
+        "--before",
+        help="Step 1 的 results_before.json：本次掃描過濾後的發現，報告的事實來源。"
+             "未指定時取自 --scan-dir",
     )
     parser.add_argument(
         "--classification",
@@ -94,13 +101,35 @@ def main() -> None:
              "預設寫到 <專案>/audit/worksheet.md 而非 --out-dir",
     )
     parser.add_argument(
-        "--out-dir", required=True,
-        help="report.md 與 report.pdf 的輸出目錄（交付物）",
+        "--out-dir", default="security-scan-report",
+        help="report.md 與 report.pdf 的輸出目錄（交付物）。預設 ./security-scan-report —— "
+             "刻意與工作底稿所在的 audit/ 分開，那裡放的是不可交付的內部文件",
     )
     parser.add_argument("--font", help="指定 CJK 字型檔；省略時自動偵測（見 md_to_pdf.py）")
     parser.add_argument("--font-bold", help="指定粗體字型檔；省略時找同目錄的 Bold 檔")
+    parser.add_argument(
+        "--include-false-positives", action="store_true",
+        help="把經查證為誤報（C）的發現也逐筆列進報告；預設不列",
+    )
     parser.add_argument("--skip-pdf", action="store_true", help="只產 report.md，跳過 PDF")
     args = parser.parse_args()
+
+    # --scan-dir fills in whatever was not named explicitly. Step 1 writes all
+    # four files into one directory under fixed names, so repeating each path
+    # on every report call was busywork that also invited mixing runs.
+    if args.scan_dir:
+        for flag, filename in (
+            ("before", "results_before.json"),
+            ("classification", "classification.json"),
+            ("env", "scan_env.json"),
+            ("scope", "scope.json"),
+        ):
+            if not getattr(args, flag):
+                candidate = os.path.join(args.scan_dir, filename)
+                if os.path.isfile(candidate):
+                    setattr(args, flag, candidate)
+    if not args.before:
+        parser.error("需要 --before，或用 --scan-dir 指向 Step 1 的輸出目錄")
 
     py = find_report_python()
 
@@ -116,6 +145,8 @@ def main() -> None:
         value = getattr(args, flag)
         if value:
             build_cmd += ["--" + flag.replace("_", "-"), value]
+    if args.include_false_positives:
+        build_cmd.append("--include-false-positives")
     # The worksheet is an internal companion document, so it defaults NEXT TO
     # the other internal notes (audit/) rather than into the delivery folder.
     worksheet = args.worksheet or os.path.join(

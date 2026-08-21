@@ -109,6 +109,9 @@ SecurityCheckKit/
 環境需求：Foundry（`forge`）、Slither（`slither`，可以裝在 venv）、系統 python 需要 `fpdf2`（見下方「環境安裝」）。
 
 ```bash
+# Step -1：產出 audit/overview.md 與 audit/scope_note.md 範本（只需一次）
+python3 <kit>/scripts/cli.py init
+
 # Step 0：環境健檢，exit code 0 才代表可以往下走
 python3 <kit>/scripts/cli.py check --src-prefix src/
 
@@ -139,15 +142,14 @@ python3 <kit>/scripts/cli.py scan \
 python3 <kit>/scripts/cli.py review --classification /tmp/security-scan/classification.json
 
 # Step 3：產出交付報告 + 工作底稿
+# --scan-dir 一次帶出 Step 1 的四個檔案（results_before/classification/scan_env/scope），
+# 個別 --before/--classification/--env/--scope 仍可覆蓋。--out-dir 預設 ./security-scan-report
 python3 <kit>/scripts/cli.py report \
-  --before /tmp/security-scan/results_before.json \
-  --classification /tmp/security-scan/classification.json \
-  --env /tmp/security-scan/scan_env.json \
-  --scope /tmp/security-scan/scope.json \
+  --scan-dir /tmp/security-scan \
   --overview ./audit/overview.md \
   --scope-note ./audit/scope_note.md \
-  --client "<甲方名稱>" --engagement-from 2026-08-01 --engagement-to 2026-08-14 \
-  --out-dir ./security-scan-report
+  --client "<甲方名稱>" --engagement-from 2026-08-01 --engagement-to 2026-08-14
+# 誤報（C）預設不列進報告，要逐筆列出加 --include-false-positives
 ```
 
 `report` 的 `--classification` / `--env` / `--scope` / `--overview` / `--scope-note` 都是選填 —— 沒提供時，報告對應章節會註明「未提供」而不是報錯，方便只想快速看一次掃描結果、還不想走完整分類流程的情境。`--overview` 的內容進「摘要」章（協定怎麼運作、

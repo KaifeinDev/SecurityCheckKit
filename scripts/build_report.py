@@ -479,31 +479,6 @@ def render_limitations():
     )
 
 
-def render_env_table(env):
-    if not env:
-        return "_未提供掃描環境資訊（Step 1 未寫入 scan_env.json）。_\n"
-    rows = [
-        ("掃描時間", env.get("scan_date", "N/A")),
-        ("專案路徑", env.get("project_path", "N/A")),
-        ("Git commit", env.get("git_commit") or "N/A（非 git 專案或未提供）"),
-        ("Solidity / solc 版本", env.get("solc_version", "N/A")),
-        ("Slither 版本", env.get("slither_version", "N/A")),
-        ("Foundry (forge) 版本", env.get("forge_version", "N/A")),
-    ]
-    lines = ["| 項目 | 內容 |", "|---|---|"]
-    lines += [f"| {k} | {v} |" for k, v in rows]
-    deps = env.get("dependencies") or []
-    if deps:
-        lines.append("")
-        lines.append("**相依套件版本**")
-        lines.append("")
-        lines.append("| 套件 | 版本 |")
-        lines.append("|---|---|")
-        for dep in deps:
-            lines.append(f"| {dep.get('name', 'N/A')} | {dep.get('version', 'N/A')} |")
-    return "\n".join(lines) + "\n"
-
-
 def render_standards_appendix():
     """Recap of the per-finding disposition classes only. The case-level tier
     is not part of the delivered report (it drives the exit code and the
@@ -644,7 +619,7 @@ def render_overview(overview_md):
     return re.sub(r"^(#{2,5}) ", r"#\1 ", overview_md.strip(), flags=re.M) + "\n"
 
 
-def render_methodology():
+def render_methodology(env=None):
     """Numbered steps, in the shape a third-party audit report uses. Scope
     limitations live in their own section — stating them here as well made the
     method read as a disclaimer twice over."""
@@ -657,7 +632,28 @@ def render_methodology():
         "記帳與實際結果脫鉤、簽章雜湊綁定範圍、可組合模組的交互失效等），並依受檢系統所屬業務領域"
         "比對該領域公開已知的事故模式，補靜態規則無法涵蓋的業務邏輯層級問題。\n"
         "3. **產出與覆核**：彙整為本報告，並對共用同一判斷理由的發現群組進行抽查。\n"
+        + _toolchain_line(env)
     )
+
+
+def _toolchain_line(env):
+    """The versions the scan ran under, in one line.
+
+    The report tells the client they can rerun the same tool and reconcile the
+    numbers; that claim is empty without saying which version. This used to be
+    a table of its own — it does not need a section, but it does need to be
+    somewhere."""
+    if not env:
+        return ""
+    parts = [
+        f"Slither {env['slither_version']}" if env.get("slither_version") else "",
+        f"solc {env['solc_version']}" if env.get("solc_version") else "",
+        f"Foundry {env['forge_version'].replace('forge Version: ', '')}" if env.get("forge_version") else "",
+    ]
+    parts = [p for p in parts if p]
+    if not parts:
+        return ""
+    return "\n本次掃描的工具版本：" + "、".join(parts) + "。重新掃描時使用相同版本，方能與本報告的數字逐筆對照。\n"
 
 
 def render_scenario_coverage(coverage):
@@ -821,11 +817,17 @@ def assign_labels(items):
     return labels
 
 
-def is_detailed(item):
+def is_detailed(item, include_false_positives=False):
     if item.get("source") == "manual":
         return True
     if item.get("category") in ("A", "D", None):
         return True
+    if item.get("category") == "C":
+        # A false positive is something the report concluded is NOT a finding.
+        # Off by default: listing seventeen of them after the real ones invites
+        # the reader to treat the section as a mixed bag. On when the client
+        # wants the tool's own output accounted for line by line.
+        return include_false_positives and item.get("severity") in DETAILED_SEVERITIES
     return item.get("severity") in DETAILED_SEVERITIES
 
 
@@ -1101,7 +1103,7 @@ def render_finding_detail(item, label=None, id_to_label=None):
     return "\n".join(out)
 
 
-def render_result_totals(items, all_count):
+def render_result_totals(items, all_count, include_false_positives=False):
     """Counts before detail: a reader opening Audit Result should see the shape
     of the outcome before the first write-up, not have to tally 30 headings."""
     by_cat = OrderedDict()
@@ -1115,10 +1117,12 @@ def render_result_totals(items, all_count):
     rest = all_count - len(items)
     lead = f"本次共 {all_count} 項發現，本章逐筆列出其中 {len(items)} 項。"
     if rest > 0:
-        lead += (
-            f"其餘 {rest} 項為低嚴重度（Low／Informational）且經判定為可接受風險或誤報者，"
-            "逐筆紀錄保留於工作底稿，可依需要調閱。"
+        excluded = (
+            "低嚴重度（Low／Informational）且經判定為可接受風險或誤報者"
+            if include_false_positives
+            else "經查證為誤報者，以及低嚴重度且經判定為可接受風險者"
         )
+        lead += f"其餘 {rest} 項為{excluded}，逐筆紀錄保留於工作底稿，可依需要調閱。"
     out = [lead, "", "| 嚴重度 | 筆數 |", "|---|---|"]
     out += [f"| {sev} | {n} |" for sev, n in by_sev.items()]
     out += ["", "| 處置分類 | 筆數 |", "|---|---|"]
@@ -1128,10 +1132,10 @@ def render_result_totals(items, all_count):
     return "\n".join(out)
 
 
-def render_findings_section(effective, manual, classification_provided):
+def render_findings_section(effective, manual, classification_provided, include_false_positives=False):
     if not classification_provided:
         return "_未提供分類資料（Step 2 未寫入 classification.json），無法列出發現明細。_\n"
-    items = [i for i in all_items(effective, manual) if is_detailed(i)]
+    items = [i for i in all_items(effective, manual) if is_detailed(i, include_false_positives)]
     if not items:
         return "本次無需要個別說明的發現。\n"
     labels = assign_labels(items)
@@ -1139,7 +1143,7 @@ def render_findings_section(effective, manual, classification_provided):
         i.get("id"): labels[id(i)] for i in items if id(i) in labels and i.get("id")
     }
 
-    out = [render_result_totals(items, len(effective) + len(manual))]
+    out = [render_result_totals(items, len(effective) + len(manual), include_false_positives)]
     out.append(
         "編號 `[H-1]` 為嚴重度代碼（C 危急／H 高／M 中／L 低／I 資訊）加該嚴重度內的序號，"
         "僅指派給經判定確實成立、需要處置的發現；經查證為誤報或已接受之風險沿用掃描編號。\n"
@@ -1154,33 +1158,6 @@ def render_findings_section(effective, manual, classification_provided):
             out.append(f"### {CATEGORY_LABEL.get(cat, cat or '未分類')}\n")
         out.append(render_finding_detail(item, labels.get(id(item)), id_to_label))
     return "\n".join(out)
-
-
-def render_evaluated_summary(effective, classification_provided):
-    if not classification_provided:
-        return "_未提供分類資料。_\n"
-    rest = [f for f in effective if not is_detailed(f)]
-    if not rest:
-        return "本次無僅需彙整呈現的低嚴重度項目。\n"
-    groups = {}
-    for f in rest:
-        key = (f["check"], f["category"], (f.get("dev_note") or "").strip())
-        groups.setdefault(key, []).append(f)
-    lines = [
-        f"以下 {len(rest)} 項為低嚴重度（Low／Informational）且經判定為可接受風險（B）或誤報（C）的發現，"
-        f"依檢查器與判定理由歸併為 {len(groups)} 組。逐筆明細保留於工作底稿，可依需要調閱。\n",
-        "| 檢查器 | 筆數 | 處置 | 判定理由 |",
-        "|---|---|---|---|",
-    ]
-    for (check, category, note), items in sorted(groups.items(), key=lambda kv: -len(kv[1])):
-        summary = note.replace("\n", " ").replace("|", "/")
-        if len(summary) > 90:
-            summary = summary[:90] + "…"
-        auto = "（自動預分類）" if any(i.get("auto_classified") for i in items) else ""
-        lines.append(
-            f"| {check} | {len(items)} | {CATEGORY_LABEL.get(category, category)}{auto} | {summary or '—'} |"
-        )
-    return "\n".join(lines) + "\n"
 
 
 def render_toc(report_body):
@@ -1239,6 +1216,12 @@ def main() -> None:
     parser.add_argument("--env")
     parser.add_argument("--scope")
     parser.add_argument("--overview", help="Markdown file inlined as the protocol-overview section")
+    parser.add_argument(
+        "--include-false-positives",
+        action="store_true",
+        help="把經查證為誤報（C）的發現也逐筆列進報告。預設不列 —— 它們是「不是問題」的"
+             "結論，與需要處置的發現混在一起會稀釋後者",
+    )
     parser.add_argument(
         "--scope-note",
         help="Markdown inlined at the end of Audit Methodology and Scoping — "
@@ -1321,7 +1304,7 @@ def main() -> None:
 {render_scope(scope, exclusion_reasons)}
 ### 檢測方法
 
-{render_methodology()}
+{render_methodology(env)}
 ### 範圍限制
 
 {render_limitations()}
@@ -1343,7 +1326,7 @@ def main() -> None:
 
 ## 檢測結果
 
-{render_findings_section(effective, manual, classification is not None)}
+{render_findings_section(effective, manual, classification is not None, args.include_false_positives)}
 ### 附錄：發現處置分類
 
 {render_standards_appendix()}"""
@@ -1362,7 +1345,7 @@ def main() -> None:
     )
 
     ordered = all_items(effective, manual)
-    detailed = [i for i in ordered if is_detailed(i)]
+    detailed = [i for i in ordered if is_detailed(i, args.include_false_positives)]
     report_missing_sections(detailed, assign_labels(detailed))
 
     assert_no_raw_dump(report, scan_list)
