@@ -7,6 +7,7 @@ Subcommands:
     doctor   Step 0 - environment health check (is this project scannable)
     scan     Step 1 - run Slither, filter to project source, collect env info
     review   Step 2 - lint classification.json for the things a machine can check
+    confirm  Step 2 - sign off on AI-drafted classifications, one by one
     report   Step 3 - build report.md + report.pdf from the scan artifacts
 
 The A/B/C/D judgement itself (Step 2) stays human-confirmed by design (see
@@ -40,6 +41,7 @@ SUBCOMMANDS = {
     "doctor": "env_check.py",
     "scan": "scan.py",
     "review": "review.py",
+    "confirm": "confirm.py",
     "report": "report.py",
 }
 

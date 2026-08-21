@@ -281,6 +281,7 @@ def reconcile(scan_list, classification):
             "dev_note": entry.get("dev_note"),
             "severity": entry.get("severity"),
             "severity_rationale": entry.get("severity_rationale"),
+            "ai_drafted": entry.get("ai_drafted"),
             "title": entry.get("title"),
             "explanation": entry.get("explanation"),
             "impact_detail": entry.get("impact_detail"),
@@ -306,6 +307,7 @@ def reconcile(scan_list, classification):
             "source",
             "severity",
             "severity_rationale",
+            "ai_drafted",
             "title",
             "explanation",
             "impact_detail",
@@ -388,6 +390,11 @@ def is_high_risk_manual(m):
     return m.get("severity") in ("Critical", "High")
 
 
+def count_ai_drafted(effective, manual):
+    """Entries a model classified that no person has signed off on yet."""
+    return sum(1 for i in list(effective) + list(manual) if i.get("ai_drafted"))
+
+
 def compute_grade(effective, manual, classification_provided):
     """Compute the Tier 1-4 executive-summary grade.
 
@@ -405,15 +412,33 @@ def compute_grade(effective, manual, classification_provided):
     if not classification_provided:
         return {"tier": None, "label": None, "reason": "尚未提供分類資料（Step 2 未寫入 classification.json），無法計算資安等級。"}
 
+    # A model-drafted classification can describe a clean case, but "可交付"
+    # asserts that someone stands behind the judgement that 92 findings are
+    # false positives. Cap the grade below deliverable until a person clears
+    # the flags (`veros confirm`), whatever the findings themselves say.
+    drafted = count_ai_drafted(effective, manual)
+
     high_scan = [f for f in effective if f["impact"] == "High" and f["category"] != "C"]
     high_manual = [m for m in manual if is_high_risk_manual(m)]
     if high_scan or high_manual:
         return {
             "tier": 4,
             "label": "第四級",
+            "ai_drafted": drafted,
             "reason": (
                 f"偵測到 {len(high_scan) + len(high_manual)} 項危急／高嚴重度發現尚未排除，"
                 "需修復並重新掃描後才可交付。"
+            ),
+        }
+
+    if drafted:
+        return {
+            "tier": 3,
+            "label": "第三級",
+            "ai_drafted": drafted,
+            "reason": (
+                f"尚有 {drafted} 筆分類為 AI 草稿、未經人工確認，因此不判定為可交付。"
+                "請逐筆複核後以 `veros confirm` 標記已確認，再重新產出報告。"
             ),
         }
 
@@ -458,6 +483,14 @@ def render_internal_banner(grade_info):
     # internal gate (exit code) and does not appear in the report body. What a
     # reader of a stray draft needs is the handling instruction, not our
     # internal grading vocabulary.
+    if grade_info.get("ai_drafted"):
+        return (
+            "**【AI 草稿 — 未經人工複核，不可作為交付文件】**\n\n"
+            f"本報告的分類判斷中有 {grade_info['ai_drafted']} 筆由模型產出、尚未經人工確認。"
+            "分類判斷是本報告可信度的來源，必須逐筆複核後才可交付；"
+            "複核完成請以 `veros confirm` 標記，再重新產出報告。\n\n"
+            "---\n\n"
+        )
     return (
         "**【內部工作版本 — 不可作為交付文件】**\n\n"
         "本報告尚有未完成處理或待確認之項目，僅供工程團隊追蹤使用；"
