@@ -126,6 +126,10 @@ python3 <kit>/scripts/cli.py scan \
 # C 誤報 / D 待確認）與 dev_note；預填的 check/impact/file/lines 不要動（Step 3 會核對）。
 # 另外必填：severity（業界五級）、降級時的 severity_rationale、A 類的 remediation、
 # D 類的 confirm_what/confirm_who/confirm_branches。
+# 判定成立（A/D）與全部 manual_findings 另外要寫報告正文的四段：title（根因+影響的
+# 一句話標題）、explanation（哪個函式、正常該怎麼運作、為何出錯）、impact_detail
+# （具體危害與業務損失）、proof_of_concept（攻擊邏輯或可重現的測試碼）。缺的話報告
+# 會顯示「待補」並在 stdout 列出，不擋產出。
 # 另外依 references/logic_scan.md 的十條情境（權限檢查實作、未保護的狀態變更、
 # 旗標未落實、滑點、價格源…）對每份合約跑一輪邏輯漏洞檢查 —— 這是補 Slither
 # 抓不到的業務邏輯漏洞的步驟；命中的與其他讀碼發現的工具外問題寫進 manual_findings[]
@@ -141,11 +145,14 @@ python3 <kit>/scripts/cli.py report \
   --env /tmp/security-scan/scan_env.json \
   --scope /tmp/security-scan/scope.json \
   --overview ./audit/overview.md \
+  --scope-note ./audit/scope_note.md \
   --client "<甲方名稱>" --engagement-from 2026-08-01 --engagement-to 2026-08-14 \
   --out-dir ./security-scan-report
 ```
 
-`report` 的 `--classification` / `--env` / `--scope` / `--overview` 都是選填 —— 沒提供時，報告對應章節會註明「未提供」而不是報錯，方便只想快速看一次掃描結果、還不想走完整分類流程的情境。
+`report` 的 `--classification` / `--env` / `--scope` / `--overview` / `--scope-note` 都是選填 —— 沒提供時，報告對應章節會註明「未提供」而不是報錯，方便只想快速看一次掃描結果、還不想走完整分類流程的情境。`--overview` 的內容進「摘要」章（協定怎麼運作、
+資產保管、角色與權限），`--scope-note` 進「檢測範圍與方法」章末尾，用來揭露這次掃描偏離標準程序之處
+（例如為了讓工具跑起來而暫時改過原始碼，使部分檔案雜湊與交付版本不符）。
 
 ### CLI 子指令細節
 
@@ -186,8 +193,15 @@ pip install slither-analyzer
 solc-select install <version> && solc-select use <version>
 
 # 報告產生需要的套件，裝在系統 python（不是上面的 venv）
-python3 -m pip install --user --break-system-packages "fpdf2>=2.8.8"
+python3 -m pip install --user --break-system-packages "fpdf2>=2.8.8" matplotlib
+
+# 中文字型：報告是繁中，PDF 需要涵蓋 CJK 的字型。macOS 不內建 Noto Sans CJK，
+# 裝到 ~/Library/Fonts/ 即可自動偵測；Linux 用 apt install fonts-noto-cjk。
+# 也可以用 --font 或 $SECURITY_SCAN_CJK_FONT 指定任一 .ttc/.otf/.ttf。
 ```
+
+`report` 會另外挑一個「有 fpdf2 + matplotlib」的直譯器來跑產報告的部分（Slither 的 venv
+會遮蔽 `python3`，所以不能直接沿用當下的）。挑錯時用 `$SECURITY_SCAN_REPORT_PYTHON` 指定。
 
 ## 測試 Fixtures
 
