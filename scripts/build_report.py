@@ -1028,7 +1028,8 @@ def render_finding_detail(item, label=None, id_to_label=None):
         if impact and IMPACT_AS_INDUSTRY.get(impact) != item.get("severity"):
             sev += f"（工具 impact：{impact}）"
         rows.append(("嚴重度", sev))
-    rows.append(("處置", CATEGORY_LABEL.get(item.get("category"), str(item.get("category")))))
+    # No 處置 row: every finding sits under a heading naming its disposition,
+    # so repeating it per finding says the same thing twice.
     rows.append(("位置", f"`{item_location(item)}`"))
     id_to_label = id_to_label or {}
     ref = lambda t: relabel_refs(t, id_to_label)
@@ -1039,17 +1040,16 @@ def render_finding_detail(item, label=None, id_to_label=None):
     # across page boundaries.
     out += [f"**{k}**：{v}" for k, v in rows]
     out.append("")
-    # Named for what it explains — why this finding carries the severity it
-    # carries — rather than for the fact that it differs from the tool's. The
-    # tool's own rating is still stated, in one parenthetical: a client who
-    # rescans will see it, and an unexplained discrepancy reads worse than a
+    # Only ever present on a downgrade, so the heading says so plainly. The
+    # tool's own rating comes with it: a client who rescans will see High where
+    # we wrote Medium, and an undeclared discrepancy reads worse than a
     # declared one.
     impact = item.get("impact")
     if item.get("severity_rationale"):
         note = ""
         if impact and IMPACT_AS_INDUSTRY.get(impact) != item.get("severity"):
             note = f"（掃描工具判定為 {impact}）"
-        out += [f"**嚴重度理由**{note}：{ref(item['severity_rationale'])}", ""]
+        out += [f"**嚴重度異動**{note}：{ref(item['severity_rationale'])}", ""]
 
     if not is_real_finding(item):
         # Examined and dismissed: the load-bearing content is why it does not

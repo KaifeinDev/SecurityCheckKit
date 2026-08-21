@@ -87,10 +87,10 @@ MAX_NOBREAK_SPAN = 40
 # Widest bound run, in half-width units (a CJK character counts 2). The text
 # column fits roughly 95; staying under that guarantees a bound run always has
 # somewhere legal to break, which is the condition fpdf2 raises on.
-MAX_BOUND_UNITS = 110
 # A bound run may exceed one line as long as it is CJK — fpdf2 breaks between
-# two CJK characters. It cannot break inside an identifier, so a run carrying a
-# Latin token this long is left with its spaces intact.
+# two CJK characters, so it always has somewhere legal to go. It cannot break
+# inside an identifier, so a run carrying a Latin token this long keeps its
+# spaces: without them fpdf2 raises rather than overflowing.
 MAX_LATIN_RUN = 14
 
 FONT_CACHE_DIR = os.path.expanduser("~/.cache/security-check-kit/fonts")
@@ -204,10 +204,6 @@ _IS_CJK = re.compile(f"[{_CJK}]")
 _LONG_LATIN = re.compile(r"[A-Za-z0-9_.:/()\[\]{}<>=!+*-]{%d,}" % (MAX_LATIN_RUN + 1))
 
 
-def _display_units(text: str) -> int:
-    return sum(2 if _IS_CJK.match(ch) else 1 for ch in text.replace("**", ""))
-
-
 def bind_cjk_gaps(text: str) -> str:
     """Make spaces that touch CJK non-breaking, where that is safe.
 
@@ -218,18 +214,18 @@ def bind_cjk_gaps(text: str) -> str:
     those spaces, so removing them as candidates lets the break fall inside the
     CJK run and the line fill.
 
-    Bound runs are capped at MAX_BOUND_UNITS. A run with no break point that
-    is wider than the column makes fpdf2 raise "Not enough horizontal space to
-    render a single character" rather than overflow, and it cannot break inside
-    an identifier the way it can between two CJK characters."""
+    Length is deliberately not capped: a bound run wider than the column is
+    fine while it is CJK, because fpdf2 can break between any two CJK
+    characters. What it cannot do is break inside an identifier, so the guard
+    is on Latin content, not on size — capping size instead left exactly the
+    long-CJK case this exists to fix still breaking early."""
     parts = text.split(" ")
     out = [parts[0]] if parts else [""]
     for nxt in parts[1:]:
         prev = out[-1]
         touches_cjk = bool(prev and nxt and (_IS_CJK.search(prev[-1]) or _IS_CJK.search(nxt[0])))
-        fits = _display_units(prev) + 1 + _display_units(nxt) <= MAX_BOUND_UNITS
         risky = _LONG_LATIN.search(prev) or _LONG_LATIN.search(nxt)
-        if touches_cjk and fits and not risky:
+        if touches_cjk and not risky:
             out[-1] = prev + "\u00a0" + nxt
         else:
             out.append(nxt)
